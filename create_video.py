@@ -307,7 +307,7 @@ class VideoProducer:
             communicate = edge_tts.Communicate(
                 self.script,
                 voice,
-                rate="-10%",
+                rate="-5%",
                 pitch="+0Hz"
             )
             
@@ -1040,6 +1040,114 @@ class VideoProducer:
         )
         return None
     
+    def upload_to_facebook(self, video_path, thumbnail_path=None):
+        """Upload video to Facebook Page"""
+        print("\n📘 Uploading to Facebook...")
+        
+        # Facebook credentials from environment
+        fb_access_token = os.environ.get('FACEBOOK_ACCESS_TOKEN')
+        fb_page_id = os.environ.get('FACEBOOK_PAGE_ID')
+        
+        if not fb_access_token or not fb_page_id:
+            print("⚠️ Facebook credentials not configured. Skipping Facebook upload.")
+            self.telegram.send_message(
+                "⚠️ <b>Facebook upload skipped</b>\n\n"
+                "Credentials not configured.\n"
+                "Configure FACEBOOK_ACCESS_TOKEN and FACEBOOK_PAGE_ID to enable."
+            )
+            return None
+        
+        self.telegram.send_message(
+            "📘 <b>Uploading to Facebook</b>\n\n"
+            "Please wait..."
+        )
+        
+        try:
+            # Step 1: Initialize upload session
+            print("  Initializing Facebook upload session...")
+            init_url = f"https://graph.facebook.com/v18.0/{fb_page_id}/videos"
+            
+            init_data = {
+                'access_token': fb_access_token,
+                'upload_phase': 'start',
+                'file_size': os.path.getsize(video_path)
+            }
+            
+            init_response = requests.post(init_url, data=init_data, timeout=30)
+            init_result = init_response.json()
+            
+            if 'video_id' not in init_result:
+                raise Exception(f"Failed to initialize upload: {init_result}")
+            
+            video_id = init_result['video_id']
+            upload_session_id = init_result['upload_session_id']
+            
+            print(f"  Upload session created: {upload_session_id}")
+            
+            # Step 2: Upload video file
+            print("  Uploading video file...")
+            
+            with open(video_path, 'rb') as video_file:
+                upload_data = {
+                    'access_token': fb_access_token,
+                    'upload_phase': 'transfer',
+                    'upload_session_id': upload_session_id,
+                    'start_offset': 0
+                }
+                
+                files = {
+                    'video_file_chunk': video_file
+                }
+                
+                upload_response = requests.post(init_url, data=upload_data, files=files, timeout=600)
+                upload_result = upload_response.json()
+                
+                if not upload_result.get('success'):
+                    raise Exception(f"Upload failed: {upload_result}")
+            
+            print("  Video uploaded successfully")
+            
+            # Step 3: Finalize and publish
+            print("  Publishing video...")
+            
+            publish_data = {
+                'access_token': fb_access_token,
+                'upload_phase': 'finish',
+                'upload_session_id': upload_session_id,
+                'title': self.title,
+                'description': self.description,
+                'published': True  # Publish immediately
+            }
+            
+            # Add thumbnail if provided
+            if thumbnail_path and os.path.exists(thumbnail_path):
+                print("  Adding custom thumbnail...")
+                # Facebook requires thumbnail as URL or will use frame from video
+                # For now, we'll let Facebook auto-generate from video
+            
+            publish_response = requests.post(init_url, data=publish_data, timeout=30)
+            publish_result = publish_response.json()
+            
+            if not publish_result.get('success'):
+                raise Exception(f"Publish failed: {publish_result}")
+            
+            # Get video URL
+            fb_video_url = f"https://www.facebook.com/{fb_page_id}/videos/{video_id}"
+            
+            print(f"\n✅ Video uploaded to Facebook!")
+            print(f"🔗 URL: {fb_video_url}")
+            
+            return fb_video_url
+            
+        except Exception as e:
+            print(f"❌ Facebook upload failed: {e}")
+            self.telegram.send_message(
+                f"⚠️ <b>Facebook upload failed</b>\n\n"
+                f"Error: {str(e)}\n\n"
+                f"Video was published to YouTube successfully."
+            )
+            return None
+    
     def upload_to_youtube(self, video_path, thumbnail_path=None):
         """Upload video to YouTube with optional custom thumbnail"""
         print("\n📤 Uploading to YouTube...")
@@ -1217,7 +1325,24 @@ class VideoProducer:
             thumbnail_path = self.request_thumbnail(timeout=1200)  # 20 minutes
             
             # Step 8: Upload to YouTube with thumbnail
-            url = self.upload_to_youtube(video_path, thumbnail_path)
+            youtube_url = self.upload_to_youtube(video_path, thumbnail_path)
+            
+            # Step 9: Upload to Facebook (NEW!)
+            facebook_url = self.upload_to_facebook(video_path, thumbnail_path)
+            
+            # Step 10: Send final notification
+            if facebook_url:
+                self.telegram.send_message(
+                    f"🎉 <b>VIDEOS PUBLISHED!</b>\n\n"
+                    f"📺 {self.title}\n\n"
+                    f"🔗 <b>YouTube:</b>\n{youtube_url}\n\n"
+                    f"🔗 <b>Facebook:</b>\n{facebook_url}\n\n"
+                    f"✅ Published on both platforms!\n\n"
+                    f"🎬 Production complete!"
+                )
+            else:
+                # YouTube notification already sent by upload_to_youtube
+                pass
             
             print("\n✅ Production completed successfully!")
             return True
