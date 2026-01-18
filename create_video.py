@@ -307,7 +307,7 @@ class VideoProducer:
             communicate = edge_tts.Communicate(
                 self.script,
                 voice,
-                rate="+0%",
+                rate="-10%",
                 pitch="+0Hz"
             )
             
