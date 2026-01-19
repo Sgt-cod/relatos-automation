@@ -300,14 +300,14 @@ class VideoProducer:
         audio_path = SEGMENTS_DIR / f"{self.video_id}_full_audio.mp3"
         
         # Use Edge TTS with American English voice
-        voice = "pt-BR-ThalitaMultilingualNeural"  # Professional male American voice
+        voice = "en-US-GuyNeural"  # Professional male American voice
         # Alternative: "en-US-JennyNeural" for female voice
         
         try:
             communicate = edge_tts.Communicate(
                 self.script,
                 voice,
-                rate="-5%",
+                rate="+0%",
                 pitch="+0Hz"
             )
             
@@ -1040,113 +1040,87 @@ class VideoProducer:
         )
         return None
     
-    def upload_to_facebook(self, video_path, thumbnail_path=None):
-        """Upload video to Facebook Page"""
-        print("\n📘 Uploading to Facebook...")
-        
-        # Facebook credentials from environment
-        fb_access_token = os.environ.get('FACEBOOK_ACCESS_TOKEN')
-        fb_page_id = os.environ.get('FACEBOOK_PAGE_ID')
-        
-        if not fb_access_token or not fb_page_id:
-            print("⚠️ Facebook credentials not configured. Skipping Facebook upload.")
-            self.telegram.send_message(
-                "⚠️ <b>Facebook upload skipped</b>\n\n"
-                "Credentials not configured.\n"
-                "Configure FACEBOOK_ACCESS_TOKEN and FACEBOOK_PAGE_ID to enable."
-            )
-            return None
-        
-        self.telegram.send_message(
-            "📘 <b>Uploading to Facebook</b>\n\n"
-            "Please wait..."
-        )
+    def send_video_to_telegram(self, video_path, thumbnail_path=None):
+        """Send final video to Telegram with all metadata"""
+        print("\n📱 Sending video to Telegram...")
         
         try:
-            # Step 1: Initialize upload session
-            print("  Initializing Facebook upload session...")
-            init_url = f"https://graph.facebook.com/v18.0/{fb_page_id}/videos"
+            # Prepare caption with metadata
+            caption = (
+                f"🎬 <b>{self.title}</b>\n\n"
+                f"📝 <b>Description:</b>\n{self.description[:200]}...\n\n"
+                f"🏷️ <b>Tags:</b>\n{', '.join(self.tags)}\n\n"
+                f"⏱️ Video ready for manual upload to Facebook!"
+            )
             
-            init_data = {
-                'access_token': fb_access_token,
-                'upload_phase': 'start',
-                'file_size': os.path.getsize(video_path)
-            }
+            # Send video
+            url = f"{self.telegram.base_url}/sendVideo"
             
-            init_response = requests.post(init_url, data=init_data, timeout=30)
-            init_result = init_response.json()
+            # Check video size (Telegram limit: 50MB)
+            video_size = os.path.getsize(video_path) / (1024 * 1024)  # MB
             
-            if 'video_id' not in init_result:
-                raise Exception(f"Failed to initialize upload: {init_result}")
+            if video_size > 50:
+                print(f"⚠️ Video too large for Telegram: {video_size:.1f}MB")
+                self.telegram.send_message(
+                    f"⚠️ <b>Video too large for Telegram</b>\n\n"
+                    f"Video size: {video_size:.1f}MB\n"
+                    f"Telegram limit: 50MB\n\n"
+                    f"The video has been published to YouTube.\n"
+                    f"Download from GitHub Actions artifacts if needed."
+                )
+                return False
             
-            video_id = init_result['video_id']
-            upload_session_id = init_result['upload_session_id']
-            
-            print(f"  Upload session created: {upload_session_id}")
-            
-            # Step 2: Upload video file
-            print("  Uploading video file...")
+            print(f"  Video size: {video_size:.1f}MB")
+            self.telegram.send_message("📤 Uploading video to Telegram... This may take a few minutes.")
             
             with open(video_path, 'rb') as video_file:
-                upload_data = {
-                    'access_token': fb_access_token,
-                    'upload_phase': 'transfer',
-                    'upload_session_id': upload_session_id,
-                    'start_offset': 0
-                }
-                
                 files = {
-                    'video_file_chunk': video_file
+                    'video': video_file
                 }
                 
-                upload_response = requests.post(init_url, data=upload_data, files=files, timeout=600)
-                upload_result = upload_response.json()
+                data = {
+                    'chat_id': self.telegram.chat_id,
+                    'caption': caption,
+                    'parse_mode': 'HTML',
+                    'supports_streaming': True
+                }
                 
-                if not upload_result.get('success'):
-                    raise Exception(f"Upload failed: {upload_result}")
+                # Add thumbnail if provided
+                if thumbnail_path and os.path.exists(thumbnail_path):
+                    with open(thumbnail_path, 'rb') as thumb_file:
+                        files['thumb'] = thumb_file
+                        response = requests.post(url, data=data, files=files, timeout=600)
+                else:
+                    response = requests.post(url, data=data, files=files, timeout=600)
             
-            print("  Video uploaded successfully")
+            result = response.json()
             
-            # Step 3: Finalize and publish
-            print("  Publishing video...")
-            
-            publish_data = {
-                'access_token': fb_access_token,
-                'upload_phase': 'finish',
-                'upload_session_id': upload_session_id,
-                'title': self.title,
-                'description': self.description,
-                'published': True  # Publish immediately
-            }
-            
-            # Add thumbnail if provided
-            if thumbnail_path and os.path.exists(thumbnail_path):
-                print("  Adding custom thumbnail...")
-                # Facebook requires thumbnail as URL or will use frame from video
-                # For now, we'll let Facebook auto-generate from video
-            
-            publish_response = requests.post(init_url, data=publish_data, timeout=30)
-            publish_result = publish_response.json()
-            
-            if not publish_result.get('success'):
-                raise Exception(f"Publish failed: {publish_result}")
-            
-            # Get video URL
-            fb_video_url = f"https://www.facebook.com/{fb_page_id}/videos/{video_id}"
-            
-            print(f"\n✅ Video uploaded to Facebook!")
-            print(f"🔗 URL: {fb_video_url}")
-            
-            return fb_video_url
-            
+            if result.get('ok'):
+                print("✅ Video sent to Telegram successfully!")
+                
+                # Send metadata as separate message for easy copy
+                metadata_message = (
+                    "📋 <b>METADATA FOR FACEBOOK:</b>\n\n"
+                    f"<b>Title:</b>\n<code>{self.title}</code>\n\n"
+                    f"<b>Description:</b>\n<code>{self.description}</code>\n\n"
+                    f"<b>Tags (for manual use):</b>\n<code>{', '.join(self.tags)}</code>\n\n"
+                    "💡 Tap to copy the text above!"
+                )
+                
+                self.telegram.send_message(metadata_message)
+                return True
+            else:
+                print(f"❌ Failed to send video: {result}")
+                return False
+                
         except Exception as e:
-            print(f"❌ Facebook upload failed: {e}")
+            print(f"❌ Error sending video to Telegram: {e}")
             self.telegram.send_message(
-                f"⚠️ <b>Facebook upload failed</b>\n\n"
+                f"❌ <b>Failed to send video via Telegram</b>\n\n"
                 f"Error: {str(e)}\n\n"
-                f"Video was published to YouTube successfully."
+                f"Video is available in GitHub Actions artifacts."
             )
-            return None
+            return False
     
     def upload_to_youtube(self, video_path, thumbnail_path=None):
         """Upload video to YouTube with optional custom thumbnail"""
@@ -1327,22 +1301,23 @@ class VideoProducer:
             # Step 8: Upload to YouTube with thumbnail
             youtube_url = self.upload_to_youtube(video_path, thumbnail_path)
             
-            # Step 9: Upload to Facebook (NEW!)
-            facebook_url = self.upload_to_facebook(video_path, thumbnail_path)
+            # Step 9: Send video to Telegram for manual Facebook upload
+            self.telegram.send_message(
+                f"🎉 <b>VIDEO PUBLISHED ON YOUTUBE!</b>\n\n"
+                f"📺 {self.title}\n"
+                f"🔗 {youtube_url}\n\n"
+                f"📤 Now sending video to Telegram for manual upload to Facebook..."
+            )
             
-            # Step 10: Send final notification
-            if facebook_url:
+            video_sent = self.send_video_to_telegram(video_path, thumbnail_path)
+            
+            if video_sent:
                 self.telegram.send_message(
-                    f"🎉 <b>VIDEOS PUBLISHED!</b>\n\n"
-                    f"📺 {self.title}\n\n"
-                    f"🔗 <b>YouTube:</b>\n{youtube_url}\n\n"
-                    f"🔗 <b>Facebook:</b>\n{facebook_url}\n\n"
-                    f"✅ Published on both platforms!\n\n"
-                    f"🎬 Production complete!"
+                    "✅ <b>Production Complete!</b>\n\n"
+                    "📺 Published to YouTube\n"
+                    "📱 Video sent to Telegram\n\n"
+                    "You can now manually upload to Facebook using the video and metadata sent above."
                 )
-            else:
-                # YouTube notification already sent by upload_to_youtube
-                pass
             
             print("\n✅ Production completed successfully!")
             return True
