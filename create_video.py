@@ -1059,12 +1059,12 @@ class VideoProducer:
             # Check video size (Telegram limit: 50MB)
             video_size = os.path.getsize(video_path) / (1024 * 1024)  # MB
             
-            if video_size > 50:
+            if video_size > 999:
                 print(f"⚠️ Video too large for Telegram: {video_size:.1f}MB")
                 self.telegram.send_message(
                     f"⚠️ <b>Video too large for Telegram</b>\n\n"
                     f"Video size: {video_size:.1f}MB\n"
-                    f"Telegram limit: 50MB\n\n"
+                    f"Telegram limit: 999MB\n\n"
                     f"The video has been published to YouTube.\n"
                     f"Download from GitHub Actions artifacts if needed."
                 )
