@@ -300,7 +300,7 @@ class VideoProducer:
         audio_path = SEGMENTS_DIR / f"{self.video_id}_full_audio.mp3"
         
         # Use Edge TTS with American English voice
-        voice = "en-US-GuyNeural"  # Professional male American voice
+        voice = "pt-BR-ThalitaMultilingualNeural"  # Professional male American voice
         # Alternative: "en-US-JennyNeural" for female voice
         
         try:
