@@ -651,9 +651,11 @@ class VideoProducer:
         print("⏰ Timeout - nenhuma confirmação recebida")
         return False
 
+    # SUBSTITUA a função process_download_confirmation() no create_video.py
+
     def process_download_confirmation(self, video_id):
         """
-        Processa a confirmação de download e remove o vídeo
+        Processa a confirmação de download e remove o vídeo + release
         """
         print(f"\n✅ Confirmação recebida para: {video_id}")
         
@@ -679,35 +681,77 @@ class VideoProducer:
         
         video_info = pending_downloads[video_id]
         video_path = video_info['video_path']
+        release_tag = video_info.get('release_tag')
         
         # Marca como confirmado
         video_info['confirmed'] = True
         video_info['confirmed_at'] = datetime.now().isoformat()
         
         # Remove o arquivo do vídeo
+        removed_file = False
         if os.path.exists(video_path):
             try:
                 os.remove(video_path)
+                removed_file = True
                 print(f"🗑️ Vídeo removido: {video_path}")
-                
-                self.telegram.send_message(
-                    "✅ <b>Download Confirmado!</b>\n\n"
-                    f"📺 {video_info['title']}\n"
-                    f"📦 Tamanho: {video_info['size_mb']:.1f}MB\n\n"
-                    "🗑️ Vídeo removido do servidor\n"
-                    "✨ Produção completa!"
-                )
-                
             except Exception as e:
                 print(f"❌ Erro ao remover vídeo: {e}")
-                self.telegram.send_message(
-                    f"⚠️ <b>Confirmado, mas erro ao remover</b>\n\n"
-                    f"Erro: {str(e)}"
-                )
+        
+        # Remove a release do GitHub
+        removed_release = False
+        if release_tag:
+            try:
+                github_token = os.environ.get('GITHUB_TOKEN')
+                repo_owner = "Sgt-cod"
+                repo_name = "relatos-automation"
+                
+                headers = {
+                    'Authorization': f'token {github_token}',
+                    'Accept': 'application/vnd.github.v3+json'
+                }
+                
+                # Obter ID da release
+                get_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/releases/tags/{release_tag}"
+                response = requests.get(get_url, headers=headers)
+                
+                if response.status_code == 200:
+                    release_id = response.json()['id']
+                    
+                    # Deletar release
+                    delete_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/releases/{release_id}"
+                    delete_response = requests.delete(delete_url, headers=headers)
+                    
+                    if delete_response.status_code == 204:
+                        removed_release = True
+                        print(f"🗑️ Release removida: {release_tag}")
+                    else:
+                        print(f"⚠️ Erro ao remover release: {delete_response.text}")
+                
+            except Exception as e:
+                print(f"⚠️ Erro ao remover release: {e}")
+        
+        # Mensagem de confirmação
+        if removed_file or removed_release:
+            status_parts = []
+            if removed_file:
+                status_parts.append("arquivo local")
+            if removed_release:
+                status_parts.append("release do GitHub")
+            
+            status_text = " e ".join(status_parts) if status_parts else "dados"
+            
+            self.telegram.send_message(
+                "✅ <b>Download Confirmado!</b>\n\n"
+                f"📺 {video_info['title']}\n"
+                f"📦 Tamanho: {video_info['size_mb']:.1f}MB\n\n"
+                f"🗑️ Removido: {status_text}\n"
+                "✨ Produção completa!"
+            )
         else:
             self.telegram.send_message(
-                "⚠️ <b>Arquivo já foi removido</b>\n\n"
-                "O vídeo não está mais no servidor."
+                "✅ <b>Confirmado</b>\n\n"
+                "⚠️ Arquivos já foram removidos\n"
+                "✨ Produção completa!"
             )
         
         # Remove da lista de pendentes
