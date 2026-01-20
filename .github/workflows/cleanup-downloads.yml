@@ -1,0 +1,65 @@
+name: Cleanup Downloads
+
+on:
+  # Executa automaticamente a cada 6 horas
+  schedule:
+    - cron: '0 */6 * * *'
+  
+  # Permite execução manual
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Ação de limpeza'
+        required: true
+        default: 'expired'
+        type: choice
+        options:
+          - expired     # Remove downloads expirados (>24h)
+          - cleanup     # Remove apenas confirmados
+          - list        # Lista pendentes
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          pip install requests
+      
+      - name: Run cleanup
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          # Se foi chamado manualmente, usa o input
+          # Senão, usa 'expired' como padrão
+          ACTION="${{ github.event.inputs.action || 'expired' }}"
+          
+          echo "Executando: $ACTION"
+          python manage_downloads.py $ACTION
+      
+      - name: Commit changes
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          # Adiciona mudanças em pending_downloads.json se houver
+          git add productions/pending_downloads.json || true
+          
+          # Commit apenas se houver mudanças
+          git diff --staged --quiet || git commit -m "🗑️ Cleanup downloads - $(date +'%Y-%m-%d %H:%M')"
+      
+      - name: Push changes
+        uses: ad-m/github-push-action@master
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          branch: ${{ github.ref }}
