@@ -4,6 +4,7 @@ Workflow Manager - Coleta informações via Telegram e inicia produção
 Roda dentro do GitHub Actions, sem necessidade de servidor externo
 FUNCIONALIDADE: Permite cancelar workflow via comando /cancel
 FUNCIONALIDADE: Suporta roteiros longos (múltiplas partes + arquivo TXT)
+FUNCIONALIDADE: Gerencia downloads de vídeos grandes via links
 """
 
 import os
@@ -11,7 +12,7 @@ import json
 import time
 import requests
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 # Configuration
@@ -50,362 +51,6 @@ class TelegramCollector:
             return 0
         except:
             return 0
-    
-    #!/usr/bin/env python3
-"""
-Adicione estas funções à classe TelegramCollector em workflow_manager.py
-Permite gerenciar downloads via comandos Telegram
-"""
-
-def handle_download_commands(self):
-    """
-    Processa comandos relacionados a downloads
-    Adicione esta verificação no loop principal do bot
-    """
-    try:
-        url = f"{self.base_url}/getUpdates"
-        params = {
-            'offset': self.update_offset,
-            'timeout': 0
-        }
-        
-        response = requests.get(url, params=params, timeout=5)
-        result = response.json()
-        
-        if not result.get('ok'):
-            return
-        
-        updates = result.get('result', [])
-        
-        for update in updates:
-            self.update_offset = update['update_id'] + 1
-            
-            # Processa callbacks de botões
-            if 'callback_query' in update:
-                self.handle_callback(update['callback_query'])
-                continue
-            
-            if 'message' not in update:
-                continue
-            
-            message = update['message']
-            
-            if str(message['chat']['id']) != str(self.chat_id):
-                continue
-            
-            text = message.get('text', '').strip()
-            
-            if not text.startswith('/'):
-                continue
-            
-            # Comandos de gerenciamento de downloads
-            if text == '/downloads' or text == '/list':
-                self.list_pending_downloads()
-            
-            elif text.startswith('/confirm '):
-                parts = text.split()
-                if len(parts) == 2:
-                    video_id = parts[1]
-                    self.confirm_download(video_id)
-                else:
-                    self.send_message(
-                        "❌ Uso correto: <code>/confirm VIDEO_ID</code>"
-                    )
-            
-            elif text == '/cleanup':
-                self.cleanup_confirmed_downloads()
-            
-            elif text == '/help':
-                self.show_help()
-    
-    except Exception as e:
-        print(f"⚠️ Erro ao processar comandos: {e}")
-
-
-def handle_callback(self, callback):
-    """Processa callbacks de botões inline"""
-    callback_id = callback['id']
-    callback_data = callback.get('data', '')
-    
-    # Responde ao callback
-    confirm_url = f"{self.base_url}/answerCallbackQuery"
-    
-    try:
-        if callback_data.startswith('confirm:'):
-            video_id = callback_data.split(':', 1)[1]
-            
-            requests.post(confirm_url, json={
-                'callback_query_id': callback_id,
-                'text': 'Processando... ⏳'
-            })
-            
-            self.confirm_download(video_id)
-        
-        elif callback_data == 'cleanup_confirmed':
-            requests.post(confirm_url, json={
-                'callback_query_id': callback_id,
-                'text': 'Limpando... 🗑️'
-            })
-            
-            self.cleanup_confirmed_downloads()
-        
-        elif callback_data == 'cleanup_expired':
-            requests.post(confirm_url, json={
-                'callback_query_id': callback_id,
-                'text': 'Removendo expirados... ⚠️'
-            })
-            
-            self.cleanup_expired_downloads()
-        
-        else:
-            requests.post(confirm_url, json={
-                'callback_query_id': callback_id,
-                'text': 'Comando desconhecido'
-            })
-    
-    except Exception as e:
-        print(f"❌ Erro ao processar callback: {e}")
-
-
-def list_pending_downloads(self):
-    """Lista downloads pendentes via Telegram"""
-    from pathlib import Path
-    import json
-    from datetime import datetime
-    
-    pending_file = Path('productions/pending_downloads.json')
-    
-    if not pending_file.exists():
-        self.send_message(
-            "✅ <b>Nenhum download pendente</b>\n\n"
-            "Todos os vídeos foram confirmados!"
-        )
-        return
-    
-    with open(pending_file, 'r') as f:
-        pending = json.load(f)
-    
-    if not pending:
-        self.send_message(
-            "✅ <b>Nenhum download pendente</b>\n\n"
-            "Todos os vídeos foram confirmados!"
-        )
-        return
-    
-    message = f"📋 <b>DOWNLOADS PENDENTES</b>\n\n"
-    message += f"Total: {len(pending)} vídeo(s)\n\n"
-    
-    for video_id, info in pending.items():
-        timestamp = datetime.fromisoformat(info['timestamp'])
-        age = datetime.now() - timestamp
-        hours_old = age.total_seconds() / 3600
-        
-        status = "✅" if info.get('confirmed') else "⏳"
-        
-        message += f"{status} <b>{info['title']}</b>\n"
-        message += f"🆔 <code>{video_id}</code>\n"
-        message += f"📦 {info['size_mb']:.1f}MB\n"
-        message += f"⏰ {hours_old:.1f}h atrás\n"
-        
-        if not info.get('confirmed'):
-            message += f"📥 <a href='{info['download_url']}'>Download</a>\n"
-        
-        message += "─────────────────\n\n"
-    
-    # Botões de ação
-    keyboard = {
-        "inline_keyboard": [
-            [{"text": "🗑️ Limpar Confirmados", "callback_data": "cleanup_confirmed"}],
-            [{"text": "⚠️ Limpar Expirados (>24h)", "callback_data": "cleanup_expired"}]
-        ]
-    }
-    
-    self.send_message(message, keyboard)
-
-
-def confirm_download(self, video_id):
-    """Confirma download e remove vídeo"""
-    from pathlib import Path
-    import json
-    import os
-    from datetime import datetime
-    
-    pending_file = Path('productions/pending_downloads.json')
-    
-    if not pending_file.exists():
-        self.send_message("❌ Nenhum download pendente")
-        return
-    
-    with open(pending_file, 'r') as f:
-        pending = json.load(f)
-    
-    if video_id not in pending:
-        self.send_message(
-            f"❌ <b>ID Inválido</b>\n\n"
-            f"Vídeo <code>{video_id}</code> não encontrado.\n\n"
-            f"Use /downloads para ver IDs disponíveis"
-        )
-        return
-    
-    info = pending[video_id]
-    video_path = info['video_path']
-    
-    # Marca como confirmado
-    info['confirmed'] = True
-    info['confirmed_at'] = datetime.now().isoformat()
-    
-    # Remove arquivo
-    removed = False
-    if os.path.exists(video_path):
-        try:
-            os.remove(video_path)
-            removed = True
-            print(f"🗑️ Vídeo removido: {video_path}")
-        except Exception as e:
-            print(f"❌ Erro ao remover: {e}")
-    
-    # Remove da lista
-    del pending[video_id]
-    
-    with open(pending_file, 'w') as f:
-        json.dump(pending, f, indent=2)
-    
-    if removed:
-        self.send_message(
-            f"✅ <b>Download Confirmado!</b>\n\n"
-            f"📺 {info['title']}\n"
-            f"📦 {info['size_mb']:.1f}MB\n\n"
-            f"🗑️ Vídeo removido do servidor\n"
-            f"📋 {len(pending)} download(s) pendente(s)"
-        )
-    else:
-        self.send_message(
-            f"✅ <b>Confirmado</b>\n\n"
-            f"⚠️ Arquivo já estava removido\n"
-            f"📋 {len(pending)} download(s) pendente(s)"
-        )
-
-
-def cleanup_confirmed_downloads(self):
-    """Remove todos os downloads já confirmados"""
-    from pathlib import Path
-    import json
-    import os
-    
-    pending_file = Path('productions/pending_downloads.json')
-    
-    if not pending_file.exists():
-        self.send_message("✅ Nenhum download para limpar")
-        return
-    
-    with open(pending_file, 'r') as f:
-        pending = json.load(f)
-    
-    confirmed_count = 0
-    removed_count = 0
-    
-    to_remove = []
-    for video_id, info in pending.items():
-        if info.get('confirmed'):
-            to_remove.append(video_id)
-            confirmed_count += 1
-            
-            video_path = info['video_path']
-            if os.path.exists(video_path):
-                try:
-                    os.remove(video_path)
-                    removed_count += 1
-                except Exception as e:
-                    print(f"⚠️ Erro: {e}")
-    
-    for video_id in to_remove:
-        del pending[video_id]
-    
-    with open(pending_file, 'w') as f:
-        json.dump(pending, f, indent=2)
-    
-    self.send_message(
-        f"✅ <b>Limpeza Concluída</b>\n\n"
-        f"🗑️ {confirmed_count} confirmado(s) removido(s)\n"
-        f"📁 {removed_count} arquivo(s) deletado(s)\n"
-        f"📋 {len(pending)} ainda pendente(s)"
-    )
-
-
-def cleanup_expired_downloads(self, hours=24):
-    """Remove downloads expirados (>24h sem confirmação)"""
-    from pathlib import Path
-    import json
-    import os
-    from datetime import datetime, timedelta
-    
-    pending_file = Path('productions/pending_downloads.json')
-    
-    if not pending_file.exists():
-        self.send_message("✅ Nenhum download para limpar")
-        return
-    
-    with open(pending_file, 'r') as f:
-        pending = json.load(f)
-    
-    cutoff = datetime.now() - timedelta(hours=hours)
-    expired_count = 0
-    removed_count = 0
-    
-    to_remove = []
-    for video_id, info in pending.items():
-        timestamp = datetime.fromisoformat(info['timestamp'])
-        
-        if not info.get('confirmed') and timestamp < cutoff:
-            to_remove.append(video_id)
-            expired_count += 1
-            
-            video_path = info['video_path']
-            if os.path.exists(video_path):
-                try:
-                    os.remove(video_path)
-                    removed_count += 1
-                except Exception as e:
-                    print(f"⚠️ Erro: {e}")
-    
-    for video_id in to_remove:
-        del pending[video_id]
-    
-    with open(pending_file, 'w') as f:
-        json.dump(pending, f, indent=2)
-    
-    self.send_message(
-        f"⚠️ <b>Limpeza de Expirados</b>\n\n"
-        f"🗑️ {expired_count} expirado(s) (>{hours}h)\n"
-        f"📁 {removed_count} arquivo(s) deletado(s)\n"
-        f"📋 {len(pending)} ainda pendente(s)"
-    )
-
-
-def show_help(self):
-    """Mostra ajuda com comandos disponíveis"""
-    help_text = """
-📚 <b>COMANDOS DISPONÍVEIS</b>
-
-<b>📥 Downloads:</b>
-/downloads - Lista downloads pendentes
-/confirm ID - Confirma download do vídeo
-/cleanup - Remove downloads confirmados
-
-<b>🎬 Produção:</b>
-/cancel - Cancela produção atual
-/help - Mostra esta ajuda
-
-<b>💡 Exemplos:</b>
-• <code>/downloads</code> - Ver lista
-• <code>/confirm download_1737123456</code> - Confirmar
-• <code>/cleanup</code> - Limpar confirmados
-
-<b>⚙️ Automático:</b>
-Vídeos expiram em 24h e são removidos automaticamente.
-"""
-    
-    self.send_message(help_text)
     
     def send_message(self, text, reply_markup=None):
         """Envia mensagem para o usuário"""
@@ -800,9 +445,336 @@ Vídeos expiram em 24h e são removidos automaticamente.
         except WorkflowCancelled:
             print("🛑 Workflow cancelado pelo usuário")
             return None
+    
+    # ==================== FUNÇÕES DE GERENCIAMENTO DE DOWNLOADS ====================
+    
+    def handle_download_commands(self):
+        """Processa comandos relacionados a downloads"""
+        try:
+            url = f"{self.base_url}/getUpdates"
+            params = {
+                'offset': self.update_offset,
+                'timeout': 0
+            }
+            
+            response = requests.get(url, params=params, timeout=5)
+            result = response.json()
+            
+            if not result.get('ok'):
+                return
+            
+            updates = result.get('result', [])
+            
+            for update in updates:
+                self.update_offset = update['update_id'] + 1
+                
+                # Processa callbacks de botões
+                if 'callback_query' in update:
+                    self.handle_callback(update['callback_query'])
+                    continue
+                
+                if 'message' not in update:
+                    continue
+                
+                message = update['message']
+                
+                if str(message['chat']['id']) != str(self.chat_id):
+                    continue
+                
+                text = message.get('text', '').strip()
+                
+                if not text.startswith('/'):
+                    continue
+                
+                # Comandos de gerenciamento de downloads
+                if text == '/downloads' or text == '/list':
+                    self.list_pending_downloads()
+                
+                elif text.startswith('/confirm '):
+                    parts = text.split()
+                    if len(parts) == 2:
+                        video_id = parts[1]
+                        self.confirm_download(video_id)
+                    else:
+                        self.send_message(
+                            "❌ Uso correto: <code>/confirm VIDEO_ID</code>"
+                        )
+                
+                elif text == '/cleanup':
+                    self.cleanup_confirmed_downloads()
+                
+                elif text == '/help':
+                    self.show_help()
+        
+        except Exception as e:
+            print(f"⚠️ Erro ao processar comandos: {e}")
+    
+    def handle_callback(self, callback):
+        """Processa callbacks de botões inline"""
+        callback_id = callback['id']
+        callback_data = callback.get('data', '')
+        
+        # Responde ao callback
+        confirm_url = f"{self.base_url}/answerCallbackQuery"
+        
+        try:
+            if callback_data.startswith('confirm:'):
+                video_id = callback_data.split(':', 1)[1]
+                
+                requests.post(confirm_url, json={
+                    'callback_query_id': callback_id,
+                    'text': 'Processando... ⏳'
+                })
+                
+                self.confirm_download(video_id)
+            
+            elif callback_data == 'cleanup_confirmed':
+                requests.post(confirm_url, json={
+                    'callback_query_id': callback_id,
+                    'text': 'Limpando... 🗑️'
+                })
+                
+                self.cleanup_confirmed_downloads()
+            
+            elif callback_data == 'cleanup_expired':
+                requests.post(confirm_url, json={
+                    'callback_query_id': callback_id,
+                    'text': 'Removendo expirados... ⚠️'
+                })
+                
+                self.cleanup_expired_downloads()
+            
+            else:
+                requests.post(confirm_url, json={
+                    'callback_query_id': callback_id,
+                    'text': 'Comando desconhecido'
+                })
+        
+        except Exception as e:
+            print(f"❌ Erro ao processar callback: {e}")
+    
+    def list_pending_downloads(self):
+        """Lista downloads pendentes via Telegram"""
+        pending_file = Path('productions/pending_downloads.json')
+        
+        if not pending_file.exists():
+            self.send_message(
+                "✅ <b>Nenhum download pendente</b>\n\n"
+                "Todos os vídeos foram confirmados!"
+            )
+            return
+        
+        with open(pending_file, 'r') as f:
+            pending = json.load(f)
+        
+        if not pending:
+            self.send_message(
+                "✅ <b>Nenhum download pendente</b>\n\n"
+                "Todos os vídeos foram confirmados!"
+            )
+            return
+        
+        message = f"📋 <b>DOWNLOADS PENDENTES</b>\n\n"
+        message += f"Total: {len(pending)} vídeo(s)\n\n"
+        
+        for video_id, info in pending.items():
+            timestamp = datetime.fromisoformat(info['timestamp'])
+            age = datetime.now() - timestamp
+            hours_old = age.total_seconds() / 3600
+            
+            status = "✅" if info.get('confirmed') else "⏳"
+            
+            message += f"{status} <b>{info['title']}</b>\n"
+            message += f"🆔 <code>{video_id}</code>\n"
+            message += f"📦 {info['size_mb']:.1f}MB\n"
+            message += f"⏰ {hours_old:.1f}h atrás\n"
+            
+            if not info.get('confirmed'):
+                message += f"📥 <a href='{info['download_url']}'>Download</a>\n"
+            
+            message += "─────────────────\n\n"
+        
+        # Botões de ação
+        keyboard = {
+            "inline_keyboard": [
+                [{"text": "🗑️ Limpar Confirmados", "callback_data": "cleanup_confirmed"}],
+                [{"text": "⚠️ Limpar Expirados (>24h)", "callback_data": "cleanup_expired"}]
+            ]
+        }
+        
+        self.send_message(message, keyboard)
+    
+    def confirm_download(self, video_id):
+        """Confirma download e remove vídeo"""
+        pending_file = Path('productions/pending_downloads.json')
+        
+        if not pending_file.exists():
+            self.send_message("❌ Nenhum download pendente")
+            return
+        
+        with open(pending_file, 'r') as f:
+            pending = json.load(f)
+        
+        if video_id not in pending:
+            self.send_message(
+                f"❌ <b>ID Inválido</b>\n\n"
+                f"Vídeo <code>{video_id}</code> não encontrado.\n\n"
+                f"Use /downloads para ver IDs disponíveis"
+            )
+            return
+        
+        info = pending[video_id]
+        video_path = info['video_path']
+        
+        # Marca como confirmado
+        info['confirmed'] = True
+        info['confirmed_at'] = datetime.now().isoformat()
+        
+        # Remove arquivo
+        removed = False
+        if os.path.exists(video_path):
+            try:
+                os.remove(video_path)
+                removed = True
+                print(f"🗑️ Vídeo removido: {video_path}")
+            except Exception as e:
+                print(f"❌ Erro ao remover: {e}")
+        
+        # Remove da lista
+        del pending[video_id]
+        
+        with open(pending_file, 'w') as f:
+            json.dump(pending, f, indent=2)
+        
+        if removed:
+            self.send_message(
+                f"✅ <b>Download Confirmado!</b>\n\n"
+                f"📺 {info['title']}\n"
+                f"📦 {info['size_mb']:.1f}MB\n\n"
+                f"🗑️ Vídeo removido do servidor\n"
+                f"📋 {len(pending)} download(s) pendente(s)"
+            )
+        else:
+            self.send_message(
+                f"✅ <b>Confirmado</b>\n\n"
+                f"⚠️ Arquivo já estava removido\n"
+                f"📋 {len(pending)} download(s) pendente(s)"
+            )
+    
+    def cleanup_confirmed_downloads(self):
+        """Remove todos os downloads já confirmados"""
+        pending_file = Path('productions/pending_downloads.json')
+        
+        if not pending_file.exists():
+            self.send_message("✅ Nenhum download para limpar")
+            return
+        
+        with open(pending_file, 'r') as f:
+            pending = json.load(f)
+        
+        confirmed_count = 0
+        removed_count = 0
+        
+        to_remove = []
+        for video_id, info in pending.items():
+            if info.get('confirmed'):
+                to_remove.append(video_id)
+                confirmed_count += 1
+                
+                video_path = info['video_path']
+                if os.path.exists(video_path):
+                    try:
+                        os.remove(video_path)
+                        removed_count += 1
+                    except Exception as e:
+                        print(f"⚠️ Erro: {e}")
+        
+        for video_id in to_remove:
+            del pending[video_id]
+        
+        with open(pending_file, 'w') as f:
+            json.dump(pending, f, indent=2)
+        
+        self.send_message(
+            f"✅ <b>Limpeza Concluída</b>\n\n"
+            f"🗑️ {confirmed_count} confirmado(s) removido(s)\n"
+            f"📁 {removed_count} arquivo(s) deletado(s)\n"
+            f"📋 {len(pending)} ainda pendente(s)"
+        )
+    
+    def cleanup_expired_downloads(self, hours=24):
+        """Remove downloads expirados (>24h sem confirmação)"""
+        pending_file = Path('productions/pending_downloads.json')
+        
+        if not pending_file.exists():
+            self.send_message("✅ Nenhum download para limpar")
+            return
+        
+        with open(pending_file, 'r') as f:
+            pending = json.load(f)
+        
+        cutoff = datetime.now() - timedelta(hours=hours)
+        expired_count = 0
+        removed_count = 0
+        
+        to_remove = []
+        for video_id, info in pending.items():
+            timestamp = datetime.fromisoformat(info['timestamp'])
+            
+            if not info.get('confirmed') and timestamp < cutoff:
+                to_remove.append(video_id)
+                expired_count += 1
+                
+                video_path = info['video_path']
+                if os.path.exists(video_path):
+                    try:
+                        os.remove(video_path)
+                        removed_count += 1
+                    except Exception as e:
+                        print(f"⚠️ Erro: {e}")
+        
+        for video_id in to_remove:
+            del pending[video_id]
+        
+        with open(pending_file, 'w') as f:
+            json.dump(pending, f, indent=2)
+        
+        self.send_message(
+            f"⚠️ <b>Limpeza de Expirados</b>\n\n"
+            f"🗑️ {expired_count} expirado(s) (>{hours}h)\n"
+            f"📁 {removed_count} arquivo(s) deletado(s)\n"
+            f"📋 {len(pending)} ainda pendente(s)"
+        )
+    
+    def show_help(self):
+        """Mostra ajuda com comandos disponíveis"""
+        help_text = """
+📚 <b>COMANDOS DISPONÍVEIS</b>
+
+<b>📥 Downloads:</b>
+/downloads - Lista downloads pendentes
+/confirm ID - Confirma download do vídeo
+/cleanup - Remove downloads confirmados
+
+<b>🎬 Produção:</b>
+/cancel - Cancela produção atual
+/help - Mostra esta ajuda
+
+<b>💡 Exemplos:</b>
+• <code>/downloads</code> - Ver lista
+• <code>/confirm download_1737123456</code> - Confirmar
+• <code>/cleanup</code> - Limpar confirmados
+
+<b>⚙️ Automático:</b>
+Vídeos expiram em 24h e são removidos automaticamente.
+"""
+        
+        self.send_message(help_text)
+
 
 def main():
     """Função principal do workflow"""
+
     print("="*60)
     print("🎬 WORKFLOW MANAGER - WWII Video Production")
     print("="*60)
