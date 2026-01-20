@@ -425,8 +425,8 @@ class VideoProducer:
 
     def send_download_link(self, video_path, youtube_url):
         """
-        Envia link de download do vídeo via Telegram com botão de confirmação
-        Faz upload para GitHub Release para gerar link público
+        Envia link de download do vídeo via Telegram
+        Versão com melhor tratamento de erros para GitHub Releases
         """
         print("\n📤 Preparando link de download...")
         
@@ -438,71 +438,98 @@ class VideoProducer:
             print(f"✅ Vídeo pequeno ({video_size_mb:.1f}MB) - enviando diretamente")
             return self.send_video_to_telegram(video_path)
         
-        # Vídeo grande - cria release e faz upload
+        # Vídeo grande - tenta criar release
         print(f"📦 Vídeo grande ({video_size_mb:.1f}MB) - criando release no GitHub")
         
-        # Gera ID único para tracking
         video_id = f"download_{int(time.time())}"
         release_tag = f"video-{self.video_id}"
         
+        # Configuração do GitHub
+        github_token = os.environ.get('GITHUB_TOKEN')
+        repo_owner = "Sgt-cod"
+        repo_name = "relatos-automation"
+        
+        if not github_token:
+            print("  ❌ GITHUB_TOKEN não encontrado!")
+            self.telegram.send_message(
+                "❌ <b>Erro de Configuração</b>\n\n"
+                "GITHUB_TOKEN não configurado.\n\n"
+                f"Vídeo publicado no YouTube:\n{youtube_url}"
+            )
+            return False
+        
+        headers = {
+            'Authorization': f'Bearer {github_token}',
+            'Accept': 'application/vnd.github+json',
+            'X-GitHub-Api-Version': '2022-11-28'
+        }
+        
         try:
-            # GitHub API para criar release
-            github_token = os.environ.get('GITHUB_TOKEN')
-            repo_owner = "Sgt-cod"
-            repo_name = "relatos-automation"
+            # Passo 1: Tentar obter release existente
+            get_release_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/releases/tags/{release_tag}"
             
-            # 1. Criar release
-            create_release_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/releases"
+            print(f"  Verificando release existente...")
+            get_response = requests.get(get_release_url, headers=headers, timeout=10)
             
-            headers = {
-                'Authorization': f'token {github_token}',
-                'Accept': 'application/vnd.github.v3+json'
-            }
-            
-            release_data = {
-                'tag_name': release_tag,
-                'name': f'Video {self.video_id}',
-                'body': f'🎬 {self.title}\n\n📺 YouTube: {youtube_url}\n\n⏰ Expira em 24 horas',
-                'draft': False,
-                'prerelease': True
-            }
-            
-            print("  Criando release no GitHub...")
-            response = requests.post(create_release_url, headers=headers, json=release_data)
-            
-            if response.status_code != 201:
-                print(f"  ⚠️ Erro ao criar release: {response.text}")
-                # Fallback: tentar pegar release existente
-                get_release_url = f"{create_release_url}/tags/{release_tag}"
-                response = requests.get(get_release_url, headers=headers)
+            if get_response.status_code == 200:
+                print(f"  ✅ Release já existe, reutilizando...")
+                release_info = get_response.json()
+            else:
+                # Passo 2: Criar nova release
+                create_url = f"https://api.github.com/repos/{repo_owner}/{repo_name}/releases"
                 
-                if response.status_code != 200:
-                    raise Exception("Não foi possível criar ou obter release")
+                release_data = {
+                    'tag_name': release_tag,
+                    'name': f'Video Download - {self.video_id}',
+                    'body': f'🎬 **{self.title}**\n\n📺 [YouTube]({youtube_url})\n\n⏰ Expira em 24 horas',
+                    'draft': False,
+                    'prerelease': True
+                }
+                
+                print(f"  Criando nova release: {release_tag}")
+                create_response = requests.post(
+                    create_url,
+                    headers=headers,
+                    json=release_data,
+                    timeout=10
+                )
+                
+                if create_response.status_code not in [200, 201]:
+                    error_msg = create_response.json().get('message', 'Erro desconhecido')
+                    print(f"  ❌ Erro ao criar release: {error_msg}")
+                    print(f"  Status: {create_response.status_code}")
+                    print(f"  Response: {create_response.text}")
+                    
+                    raise Exception(f"Falha ao criar release: {error_msg}")
+                
+                release_info = create_response.json()
+                print(f"  ✅ Release criada com sucesso!")
             
-            release_info = response.json()
+            # Passo 3: Upload do vídeo
             upload_url = release_info['upload_url'].replace('{?name,label}', '')
-            
-            # 2. Upload do vídeo para a release
             video_filename = os.path.basename(video_path)
-            upload_url_with_name = f"{upload_url}?name={video_filename}"
             
             print(f"  Fazendo upload do vídeo ({video_size_mb:.1f}MB)...")
+            print(f"  Isso pode levar alguns minutos...")
             
             with open(video_path, 'rb') as video_file:
                 upload_headers = {
-                    'Authorization': f'token {github_token}',
-                    'Content-Type': 'application/octet-stream'
+                    'Authorization': f'Bearer {github_token}',
+                    'Content-Type': 'application/octet-stream',
+                    'Accept': 'application/vnd.github+json'
                 }
                 
                 upload_response = requests.post(
-                    upload_url_with_name,
+                    f"{upload_url}?name={video_filename}",
                     headers=upload_headers,
                     data=video_file,
-                    timeout=600
+                    timeout=900  # 15 minutos
                 )
             
             if upload_response.status_code not in [200, 201]:
-                raise Exception(f"Falha no upload: {upload_response.text}")
+                error_msg = upload_response.json().get('message', 'Erro desconhecido')
+                print(f"  ❌ Erro no upload: {error_msg}")
+                raise Exception(f"Falha no upload: {error_msg}")
             
             asset_info = upload_response.json()
             download_url = asset_info['browser_download_url']
@@ -510,16 +537,28 @@ class VideoProducer:
             print(f"  ✅ Upload concluído!")
             print(f"  🔗 URL: {download_url}")
             
-        except Exception as e:
-            print(f"  ❌ Erro ao criar release: {e}")
+        except requests.exceptions.Timeout:
+            print(f"  ❌ Timeout ao criar release ou fazer upload")
             self.telegram.send_message(
-                f"❌ <b>Erro ao gerar link de download</b>\n\n"
+                "❌ <b>Timeout ao criar link de download</b>\n\n"
+                "O processo demorou muito.\n\n"
+                f"Vídeo publicado no YouTube:\n{youtube_url}"
+            )
+            return False
+            
+        except Exception as e:
+            print(f"  ❌ Erro: {e}")
+            
+            # Envia mensagem de erro detalhada
+            self.telegram.send_message(
+                "❌ <b>Erro ao gerar link de download</b>\n\n"
                 f"Erro: {str(e)}\n\n"
-                f"O vídeo foi publicado no YouTube:\n{youtube_url}"
+                f"Vídeo publicado no YouTube:\n{youtube_url}\n\n"
+                "💡 O vídeo está disponível nos artifacts do GitHub Actions."
             )
             return False
         
-        # Salva info de pending download
+        # Salva informações do download pendente
         pending_file = Path('productions/pending_downloads.json')
         pending_downloads = {}
         
@@ -541,7 +580,7 @@ class VideoProducer:
         with open(pending_file, 'w') as f:
             json.dump(pending_downloads, f, indent=2)
         
-        # Monta mensagem com link e botão
+        # Monta mensagem
         message = f"""🎉 <b>VÍDEO PUBLICADO NO YOUTUBE!</b>
 
 📺 <b>Título:</b> {self.title}
@@ -564,7 +603,6 @@ class VideoProducer:
 
 🆔 ID: <code>{video_id}</code>"""
         
-        # Botão de confirmação
         keyboard = {
             "inline_keyboard": [[
                 {
