@@ -418,62 +418,61 @@ class VideoProducer:
         
         return media_list
     
+    # ADICIONE ESTAS FUNÇÕES DENTRO DA CLASSE VideoProducer
+# (logo após a função upload_to_youtube)
+
     def send_download_link(self, video_path, youtube_url):
-    """
-    Envia link de download do vídeo via Telegram com botão de confirmação
-    Substitui o envio direto quando vídeo > 50MB
-    """
-    print("\n📤 Preparando link de download...")
-    
-    # Verifica tamanho do vídeo
-    video_size_mb = os.path.getsize(video_path) / (1024 * 1024)
-    
-    # Se menor que 50MB, tenta envio direto
-    if video_size_mb < 50:
-        print(f"✅ Vídeo pequeno ({video_size_mb:.1f}MB) - enviando diretamente")
-        return self.send_video_to_telegram(video_path)
-    
-    # Vídeo grande - envia link de download
-    print(f"📦 Vídeo grande ({video_size_mb:.1f}MB) - gerando link de download")
-    
-    # Gera ID único para tracking
-    video_id = f"download_{int(time.time())}"
-    
-    # Salva info de pending download
-    pending_file = Path('productions/pending_downloads.json')
-    pending_downloads = {}
-    
-    if pending_file.exists():
-        with open(pending_file, 'r') as f:
-            pending_downloads = json.load(f)
-    
-    # Nome do arquivo no output
-    video_filename = os.path.basename(video_path)
-    
-    # URL do GitHub Pages (ajuste para seu username/repo)
-    github_user = "Sgt-cod"
-    repo_name = "relatos-automation"
-    download_url = f"https://raw.githubusercontent.com/{github_user}/{repo_name}/main/output/{video_filename}"
-    
-    # Alternativa: GitHub Pages (se habilitado)
-    # download_url = f"https://{github_user}.github.io/{repo_name}/output/{video_filename}"
-    
-    pending_downloads[video_id] = {
-        "video_path": str(video_path),
-        "download_url": download_url,
-        "youtube_url": youtube_url,
-        "title": self.title,
-        "size_mb": video_size_mb,
-        "timestamp": datetime.now().isoformat(),
-        "confirmed": False
-    }
-    
-    with open(pending_file, 'w') as f:
-        json.dump(pending_downloads, f, indent=2)
-    
-    # Monta mensagem com link e botão
-    message = f"""
-🎉 <b>VÍDEO PUBLICADO NO YOUTUBE!</b>
+        """
+        Envia link de download do vídeo via Telegram com botão de confirmação
+        Substitui o envio direto quando vídeo > 50MB
+        """
+        print("\n📤 Preparando link de download...")
+        
+        # Verifica tamanho do vídeo
+        video_size_mb = os.path.getsize(video_path) / (1024 * 1024)
+        
+        # Se menor que 50MB, tenta envio direto
+        if video_size_mb < 50:
+            print(f"✅ Vídeo pequeno ({video_size_mb:.1f}MB) - enviando diretamente")
+            return self.send_video_to_telegram(video_path)
+        
+        # Vídeo grande - envia link de download
+        print(f"📦 Vídeo grande ({video_size_mb:.1f}MB) - gerando link de download")
+        
+        # Gera ID único para tracking
+        video_id = f"download_{int(time.time())}"
+        
+        # Salva info de pending download
+        pending_file = Path('productions/pending_downloads.json')
+        pending_downloads = {}
+        
+        if pending_file.exists():
+            with open(pending_file, 'r') as f:
+                pending_downloads = json.load(f)
+        
+        # Nome do arquivo no output
+        video_filename = os.path.basename(video_path)
+        
+        # URL do GitHub Pages (ajuste para seu username/repo)
+        github_user = "Sgt-cod"
+        repo_name = "relatos-automation"
+        download_url = f"https://raw.githubusercontent.com/{github_user}/{repo_name}/main/output/{video_filename}"
+        
+        pending_downloads[video_id] = {
+            "video_path": str(video_path),
+            "download_url": download_url,
+            "youtube_url": youtube_url,
+            "title": self.title,
+            "size_mb": video_size_mb,
+            "timestamp": datetime.now().isoformat(),
+            "confirmed": False
+        }
+        
+        with open(pending_file, 'w') as f:
+            json.dump(pending_downloads, f, indent=2)
+        
+        # Monta mensagem com link e botão
+        message = f"""🎉 <b>VÍDEO PUBLICADO NO YOUTUBE!</b>
 
 📺 <b>Título:</b> {self.title}
 🔗 <b>YouTube:</b> {youtube_url}
@@ -493,164 +492,163 @@ class VideoProducer:
 
 ⏰ <b>Link expira em 24 horas</b>
 
-🆔 ID: <code>{video_id}</code>
-"""
-    
-    # Botão de confirmação
-    keyboard = {
-        "inline_keyboard": [[
-            {
-                "text": "✅ Confirmar Download",
-                "callback_data": f"confirm:{video_id}"
-            }
-        ]]
-    }
-    
-    self.telegram.send_message(message, keyboard)
-    
-    print(f"✅ Link de download enviado (ID: {video_id})")
-    return True
+🆔 ID: <code>{video_id}</code>"""
+        
+        # Botão de confirmação
+        keyboard = {
+            "inline_keyboard": [[
+                {
+                    "text": "✅ Confirmar Download",
+                    "callback_data": f"confirm:{video_id}"
+                }
+            ]]
+        }
+        
+        self.telegram.send_message(message, keyboard)
+        
+        print(f"✅ Link de download enviado (ID: {video_id})")
+        return True
 
-
-def handle_download_confirmation(self):
-    """
-    Aguarda confirmação de download via callback do botão
-    Chame esta função após enviar o link de download
-    """
-    print("\n⏳ Aguardando confirmação de download...")
-    
-    timeout = 86400  # 24 horas
-    start_time = time.time()
-    
-    while time.time() - start_time < timeout:
-        try:
-            url = f"{self.telegram.base_url}/getUpdates"
-            params = {
-                'offset': self.telegram.update_offset,
-                'timeout': 30
-            }
-            
-            response = requests.get(url, params=params, timeout=35)
-            result = response.json()
-            
-            if not result.get('ok'):
-                time.sleep(5)
-                continue
-            
-            updates = result.get('result', [])
-            
-            for update in updates:
-                self.telegram.update_offset = update['update_id'] + 1
+    def handle_download_confirmation(self):
+        """
+        Aguarda confirmação de download via callback do botão
+        Chame esta função após enviar o link de download
+        """
+        print("\n⏳ Aguardando confirmação de download...")
+        
+        timeout = 86400  # 24 horas
+        start_time = time.time()
+        
+        while time.time() - start_time < timeout:
+            try:
+                url = f"{self.telegram.base_url}/getUpdates"
+                params = {
+                    'offset': self.telegram.update_offset,
+                    'timeout': 30
+                }
                 
-                # Verifica callback de botão
-                if 'callback_query' in update:
-                    callback = update['callback_query']
-                    callback_data = callback.get('data', '')
-                    
-                    if callback_data.startswith('confirm:'):
-                        video_id = callback_data.split(':', 1)[1]
-                        
-                        # Confirma o callback para remover "loading"
-                        confirm_url = f"{self.telegram.base_url}/answerCallbackQuery"
-                        requests.post(confirm_url, json={
-                            'callback_query_id': callback['id'],
-                            'text': 'Download confirmado! ✅'
-                        })
-                        
-                        # Processa confirmação
-                        success = self.process_download_confirmation(video_id)
-                        
-                        if success:
-                            return True
+                response = requests.get(url, params=params, timeout=35)
+                result = response.json()
                 
-                # Também aceita comando /confirm ID
-                elif 'message' in update:
-                    message = update['message']
-                    text = message.get('text', '').strip()
+                if not result.get('ok'):
+                    time.sleep(5)
+                    continue
+                
+                updates = result.get('result', [])
+                
+                for update in updates:
+                    self.telegram.update_offset = update['update_id'] + 1
                     
-                    if text.lower().startswith('/confirm'):
-                        parts = text.split()
-                        if len(parts) == 2:
-                            video_id = parts[1]
+                    # Verifica callback de botão
+                    if 'callback_query' in update:
+                        callback = update['callback_query']
+                        callback_data = callback.get('data', '')
+                        
+                        if callback_data.startswith('confirm:'):
+                            video_id = callback_data.split(':', 1)[1]
+                            
+                            # Confirma o callback para remover "loading"
+                            confirm_url = f"{self.telegram.base_url}/answerCallbackQuery"
+                            requests.post(confirm_url, json={
+                                'callback_query_id': callback['id'],
+                                'text': 'Download confirmado! ✅'
+                            })
+                            
+                            # Processa confirmação
                             success = self.process_download_confirmation(video_id)
                             
                             if success:
                                 return True
+                    
+                    # Também aceita comando /confirm ID
+                    elif 'message' in update:
+                        message = update['message']
+                        text = message.get('text', '').strip()
+                        
+                        if text.lower().startswith('/confirm'):
+                            parts = text.split()
+                            if len(parts) == 2:
+                                video_id = parts[1]
+                                success = self.process_download_confirmation(video_id)
+                                
+                                if success:
+                                    return True
+            
+            except Exception as e:
+                print(f"⚠️ Erro ao aguardar confirmação: {e}")
+                time.sleep(10)
         
-        except Exception as e:
-            print(f"⚠️ Erro ao aguardar confirmação: {e}")
-            time.sleep(10)
-    
-    print("⏰ Timeout - nenhuma confirmação recebida")
-    return False
-
-
-def process_download_confirmation(self, video_id):
-    """
-    Processa a confirmação de download e remove o vídeo
-    """
-    print(f"\n✅ Confirmação recebida para: {video_id}")
-    
-    pending_file = Path('productions/pending_downloads.json')
-    
-    if not pending_file.exists():
-        self.telegram.send_message(
-            "❌ <b>Erro</b>\n\n"
-            "Lista de downloads não encontrada."
-        )
+        print("⏰ Timeout - nenhuma confirmação recebida")
         return False
-    
-    with open(pending_file, 'r') as f:
-        pending_downloads = json.load(f)
-    
-    if video_id not in pending_downloads:
-        self.telegram.send_message(
-            "❌ <b>ID Inválido</b>\n\n"
-            f"Vídeo {video_id} não encontrado.\n"
-            "Verifique o ID e tente novamente."
-        )
-        return False
-    
-    video_info = pending_downloads[video_id]
-    video_path = video_info['video_path']
-    
-    # Marca como confirmado
-    video_info['confirmed'] = True
-    video_info['confirmed_at'] = datetime.now().isoformat()
-    
-    # Remove o arquivo do vídeo
-    if os.path.exists(video_path):
-        try:
-            os.remove(video_path)
-            print(f"🗑️ Vídeo removido: {video_path}")
-            
+
+    def process_download_confirmation(self, video_id):
+        """
+        Processa a confirmação de download e remove o vídeo
+        """
+        print(f"\n✅ Confirmação recebida para: {video_id}")
+        
+        pending_file = Path('productions/pending_downloads.json')
+        
+        if not pending_file.exists():
             self.telegram.send_message(
-                "✅ <b>Download Confirmado!</b>\n\n"
-                f"📺 {video_info['title']}\n"
-                f"📦 Tamanho: {video_info['size_mb']:.1f}MB\n\n"
-                "🗑️ Vídeo removido do servidor\n"
-                "✨ Produção completa!"
+                "❌ <b>Erro</b>\n\n"
+                "Lista de downloads não encontrada."
             )
-            
-        except Exception as e:
-            print(f"❌ Erro ao remover vídeo: {e}")
+            return False
+        
+        with open(pending_file, 'r') as f:
+            pending_downloads = json.load(f)
+        
+        if video_id not in pending_downloads:
             self.telegram.send_message(
-                f"⚠️ <b>Confirmado, mas erro ao remover</b>\n\n"
-                f"Erro: {str(e)}"
+                "❌ <b>ID Inválido</b>\n\n"
+                f"Vídeo {video_id} não encontrado.\n"
+                "Verifique o ID e tente novamente."
             )
-    else:
-        self.telegram.send_message(
-            "⚠️ <b>Arquivo já foi removido</b>\n\n"
-            "O vídeo não está mais no servidor."
-        )
+            return False
+        
+        video_info = pending_downloads[video_id]
+        video_path = video_info['video_path']
+        
+        # Marca como confirmado
+        video_info['confirmed'] = True
+        video_info['confirmed_at'] = datetime.now().isoformat()
+        
+        # Remove o arquivo do vídeo
+        if os.path.exists(video_path):
+            try:
+                os.remove(video_path)
+                print(f"🗑️ Vídeo removido: {video_path}")
+                
+                self.telegram.send_message(
+                    "✅ <b>Download Confirmado!</b>\n\n"
+                    f"📺 {video_info['title']}\n"
+                    f"📦 Tamanho: {video_info['size_mb']:.1f}MB\n\n"
+                    "🗑️ Vídeo removido do servidor\n"
+                    "✨ Produção completa!"
+                )
+                
+            except Exception as e:
+                print(f"❌ Erro ao remover vídeo: {e}")
+                self.telegram.send_message(
+                    f"⚠️ <b>Confirmado, mas erro ao remover</b>\n\n"
+                    f"Erro: {str(e)}"
+                )
+        else:
+            self.telegram.send_message(
+                "⚠️ <b>Arquivo já foi removido</b>\n\n"
+                "O vídeo não está mais no servidor."
+            )
+        
+        # Remove da lista de pendentes
+        del pending_downloads[video_id]
+        
+        with open(pending_file, 'w') as f:
+            json.dump(pending_downloads, f, indent=2)
+        
+        return True
+
     
-    # Remove da lista de pendentes
-    del pending_downloads[video_id]
-    
-    with open(pending_file, 'w') as f:
-        json.dump(pending_downloads, f, indent=2)
-    
-    return True
     
     def create_placeholder(self, segment_num):
         """Create black placeholder image"""
@@ -1500,70 +1498,72 @@ def process_download_confirmation(self, video_id):
             self.telegram.send_message(f"❌ YouTube upload failed: {e}")
             raise
     
+    
+
     async def run(self):
-    """Main production workflow - VERSÃO MODIFICADA"""
-    try:
-        self.telegram.send_message(
-            f"🎬 <b>Production Started</b>\n\n"
-            f"🎯 Video: {self.title}\n"
-            f"🆔 ID: {self.video_id}\n\n"
-            f"Starting audio generation..."
-        )
-        
-        # Steps 1-6: Unchanged (audio, segments, media, music, logo, video)
-        audio_path = await self.generate_audio()
-        audio_segments = self.segment_audio(audio_path)
-        media_list = self.collect_media(audio_segments)
-        background_music = self.request_background_music(timeout=600)
-        channel_logo = self.request_channel_logo(timeout=600)
-        
-        self.telegram.send_message("🎥 Creating final video with all features...")
-        video_path = self.create_video(audio_segments, media_list, background_music, channel_logo)
-        
-        # Step 7: Request thumbnail
-        thumbnail_path = self.request_thumbnail(timeout=1200)
-        
-        # Step 8: Upload to YouTube
-        youtube_url = self.upload_to_youtube(video_path, thumbnail_path)
-        
-        # Step 9: NOVO - Enviar link de download ao invés de vídeo direto
-        self.telegram.send_message(
-            f"🎉 <b>VIDEO PUBLISHED ON YOUTUBE!</b>\n\n"
-            f"📺 {self.title}\n"
-            f"🔗 {youtube_url}\n\n"
-            f"📤 Preparando link de download para outras redes..."
-        )
-        
-        # Envia link de download (verifica tamanho automaticamente)
-        self.send_download_link(video_path, youtube_url)
-        
-        # OPCIONAL: Aguardar confirmação antes de encerrar workflow
-        # Comentar as próximas 3 linhas se quiser que o workflow termine imediatamente
-        self.telegram.send_message(
-            "⏳ <b>Aguardando confirmação de download...</b>\n\n"
-            "O workflow aguardará até você confirmar o download.\n"
-            "Após confirmação, o vídeo será removido automaticamente."
-        )
-        
-        # Aguarda confirmação (timeout: 24h)
-        confirmed = self.handle_download_confirmation()
-        
-        if confirmed:
-            print("\n✅ Production completed successfully with download confirmed!")
-        else:
-            print("\n⚠️ Production completed but no download confirmation received")
+        """Main production workflow - VERSÃO MODIFICADA"""
+        try:
             self.telegram.send_message(
-                "⏰ <b>Tempo de confirmação esgotado</b>\n\n"
-                "O vídeo permanece no servidor.\n"
-                "Use /confirm ID quando baixar."
+                f"🎬 <b>Production Started</b>\n\n"
+                f"🎯 Video: {self.title}\n"
+                f"🆔 ID: {self.video_id}\n\n"
+                f"Starting audio generation..."
             )
-        
-        return True
-        
-    except Exception as e:
-        print(f"\n❌ Production failed: {e}")
-        self.telegram.send_message(f"❌ <b>Production Failed</b>\n\n{e}")
-        raise
+            
+            # Steps 1-6: Unchanged (audio, segments, media, music, logo, video)
+            audio_path = await self.generate_audio()
+            audio_segments = self.segment_audio(audio_path)
+            media_list = self.collect_media(audio_segments)
+            background_music = self.request_background_music(timeout=600)
+            channel_logo = self.request_channel_logo(timeout=600)
+            
+            self.telegram.send_message("🎥 Creating final video with all features...")
+            video_path = self.create_video(audio_segments, media_list, background_music, channel_logo)
+            
+            # Step 7: Request thumbnail
+            thumbnail_path = self.request_thumbnail(timeout=1200)
+            
+            # Step 8: Upload to YouTube
+            youtube_url = self.upload_to_youtube(video_path, thumbnail_path)
+            
+            # Step 9: NOVO - Enviar link de download ao invés de vídeo direto
+            self.telegram.send_message(
+                f"🎉 <b>VIDEO PUBLISHED ON YOUTUBE!</b>\n\n"
+                f"📺 {self.title}\n"
+                f"🔗 {youtube_url}\n\n"
+                f"📤 Preparando link de download para outras redes..."
+            )
+            
+            # Envia link de download (verifica tamanho automaticamente)
+            self.send_download_link(video_path, youtube_url)
+            
+            # OPCIONAL: Aguardar confirmação antes de encerrar workflow
+            # Comente as próximas linhas se quiser que o workflow termine imediatamente
+            self.telegram.send_message(
+                "⏳ <b>Aguardando confirmação de download...</b>\n\n"
+                "O workflow aguardará até você confirmar o download.\n"
+                "Após confirmação, o vídeo será removido automaticamente."
+            )
+            
+            # Aguarda confirmação (timeout: 24h)
+            confirmed = self.handle_download_confirmation()
+            
+            if confirmed:
+                print("\n✅ Production completed successfully with download confirmed!")
+            else:
+                print("\n⚠️ Production completed but no download confirmation received")
+                self.telegram.send_message(
+                    "⏰ <b>Tempo de confirmação esgotado</b>\n\n"
+                    "O vídeo permanece no servidor.\n"
+                    "Use /confirm ID quando baixar."
+                )
+            
+            return True
+            
+        except Exception as e:
+            print(f"\n❌ Production failed: {e}")
+            self.telegram.send_message(f"❌ <b>Production Failed</b>\n\n{e}")
+            raise
 
 def run_production(video_data, collector=None):
     """Main entry point called by workflow_manager"""
