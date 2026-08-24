@@ -30,7 +30,10 @@ jobs:
 
       - name: Publicar a função (modal deploy)
         id: deploy
-        run: modal deploy modal_avatar.py | tee deploy_output.txt
+        shell: bash
+        run: |
+          set -o pipefail
+          modal deploy modal_avatar.py | tee deploy_output.txt
 
       - name: Se falhou, mostrar o log completo do build da imagem
         if: failure()
