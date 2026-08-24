@@ -1,0 +1,47 @@
+name: Checar aprovação e publicar
+
+on:
+  schedule:
+    # Intervalo mínimo permitido pelo GitHub Actions é 5 min.
+    # Cron não é garantido no minuto exato sob carga do GitHub, mas na
+    # prática costuma rodar com poucos minutos de atraso.
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  check-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Checar respostas no Telegram
+        id: check
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: python check_approvals_step.py
+
+      - name: Publicar vídeos aprovados
+        if: steps.check.outputs.has_approved == 'true'
+        env:
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+        run: python publish_youtube.py
+
+      - name: Commitar estado atualizado (offset + remoção de pendências)
+        run: |
+          git config user.name "pipeline-bot"
+          git config user.email "pipeline-bot@users.noreply.github.com"
+          git add pending/
+          git commit -m "Atualiza estado de aprovações: $(date -u +%Y%m%d-%H%M%S)" || echo "Nada para commitar"
+          git push
