@@ -20,7 +20,7 @@ app = modal.App("avatar-lipsync")
 # SadTalker precisa de torch + ffmpeg + dlib/face-alignment.
 image = (
     modal.Image.debian_slim(python_version="3.10")
-    .apt_install("ffmpeg", "libgl1", "git", "build-essential")
+    .apt_install("ffmpeg", "libgl1", "git", "build-essential", "wget", "unzip")
     # Estágio 1: numpy fixado ANTES do resto — vários pacotes desse ecossistema
     # (face-alignment, gfpgan, resampy) ainda não são compatíveis com numpy 2.x
     # e falham no build se o resolvedor do pip escolher a versão mais nova.
@@ -42,6 +42,9 @@ image = (
         "gfpgan",
         "safetensors",
     )
+    # Estágio 4: a Modal exige que o FastAPI seja instalado explicitamente
+    # na imagem para funções que usam @modal.fastapi_endpoint.
+    .pip_install("fastapi[standard]")
     .run_commands(
         "git clone https://github.com/OpenTalker/SadTalker.git /sadtalker",
         "cd /sadtalker && bash scripts/download_models.sh || true",
