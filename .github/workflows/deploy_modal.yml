@@ -29,7 +29,19 @@ jobs:
         run: modal token set --token-id "$MODAL_TOKEN_ID" --token-secret "$MODAL_TOKEN_SECRET"
 
       - name: Publicar a função (modal deploy)
+        id: deploy
         run: modal deploy modal_avatar.py | tee deploy_output.txt
+
+      - name: Se falhou, mostrar o log completo do build da imagem
+        if: failure()
+        run: |
+          IMAGE_ID=$(grep -oE 'im-[a-zA-Z0-9]+' deploy_output.txt | tail -1)
+          if [ -n "$IMAGE_ID" ]; then
+            echo "Log completo do build da imagem $IMAGE_ID:"
+            modal image logs "$IMAGE_ID"
+          else
+            echo "Não encontrei o ID da imagem no log acima — role o log do passo anterior manualmente."
+          fi
 
       - name: Mostrar a URL do endpoint
         run: |
