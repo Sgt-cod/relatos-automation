@@ -144,10 +144,21 @@ def find_candidate_video() -> dict:
 # ---------------------------------------------------------------------------
 
 def download_video(youtube_url: str, output_path: str = "source_video.mp4") -> str:
-    subprocess.run(
-        ["yt-dlp", "-f", "mp4", "-o", output_path, youtube_url],
-        check=True,
-    )
+    cmd = ["yt-dlp"]
+
+    # Se houver cookies exportados de uma sessão logada, usa — necessário
+    # porque o YouTube costuma bloquear downloads vindos de IPs de
+    # datacenter (como os runners do GitHub Actions) com a mensagem
+    # "Sign in to confirm you're not a bot".
+    if os.path.exists("cookies.txt"):
+        cmd += ["--cookies", "cookies.txt"]
+
+    cmd += [
+        "-f", "b[ext=mp4]/bv[ext=mp4]+ba[ext=m4a]/mp4",  # evita o aviso de formato e cobre mais casos
+        "-o", output_path,
+        youtube_url,
+    ]
+    subprocess.run(cmd, check=True)
     return output_path
 
 
