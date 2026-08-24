@@ -9,11 +9,11 @@ Configuração compartilhada entre find_and_download.py e generate_script.py.
 # ou veja o código-fonte da página / use a API channels.list com
 # forHandle=@nomedocanal e leia o campo "id" da resposta.
 CHANNELS = {
-    "CNN Brasil": "CHANNEL_ID_AQUI",
-    "G1": "CHANNEL_ID_AQUI",
-    "Estadão": "CHANNEL_ID_AQUI",
-    "Folha de S.Paulo": "CHANNEL_ID_AQUI",
-    "Metrópoles": "CHANNEL_ID_AQUI",
+    "CNN Brasil": "UCvdwhh_fDyWccR42-rReZLw",
+    "G1": "UCaGmdJSSiR7fkh2A-c6emsA",
+    "Estadão": "CHANNEL_ID_AQUI",  # pegue pelo navegador — ver GUIA_APIS.md
+    "Folha de S.Paulo": "CHANNEL_ID_AQUI",  # pegue pelo navegador — ver GUIA_APIS.md
+    "Metrópoles": "CHANNEL_ID_AQUI",  # pegue pelo navegador — ver GUIA_APIS.md
 }
 
 SEARCH_KEYWORDS = ["entrevista"]
