@@ -1,0 +1,133 @@
+"""
+modal_avatar.py
+
+Função serverless na Modal que roda o SadTalker para gerar um vídeo de avatar
+com lipsync, a partir de uma imagem estática (assets/avatar.png) e um áudio
+(gerado pelo Fish Audio a partir do roteiro do Gemini).
+
+Uso:
+    modal deploy modal_avatar.py      # publica o endpoint
+    modal run modal_avatar.py         # testa localmente disparando uma vez
+
+O endpoint fica exposto como URL HTTPS, que o GitHub Actions chama via POST.
+"""
+
+import modal
+
+app = modal.App("avatar-lipsync")
+
+# Imagem do container: instala SadTalker e dependências.
+# SadTalker precisa de torch + ffmpeg + dlib/face-alignment.
+image = (
+    modal.Image.debian_slim(python_version="3.10")
+    .apt_install("ffmpeg", "libgl1", "git")
+    .pip_install(
+        "torch",
+        "torchvision",
+        "torchaudio",
+        "numpy",
+        "face-alignment",
+        "imageio",
+        "imageio-ffmpeg",
+        "librosa",
+        "resampy",
+        "pydub",
+        "scipy",
+        "kornia",
+        "yacs",
+        "gfpgan",
+        "safetensors",
+    )
+    .run_commands(
+        "git clone https://github.com/OpenTalker/SadTalker.git /sadtalker",
+        "cd /sadtalker && bash scripts/download_models.sh || true",
+    )
+)
+
+# Volume persistente para não re-baixar checkpoints a cada cold start
+checkpoints_volume = modal.Volume.from_name(
+    "sadtalker-checkpoints", create_if_missing=True
+)
+
+
+@app.function(
+    image=image,
+    gpu="A10G",  # bom custo-benefício para SadTalker; trocar para "T4" se quiser mais barato ainda
+    volumes={"/sadtalker/checkpoints": checkpoints_volume},
+    timeout=600,  # 10 min de margem por geração
+    scaledown_window=60,  # libera o worker 60s após ficar ocioso (evita cobrança de idle)
+)
+def generate_avatar_video(image_bytes: bytes, audio_bytes: bytes) -> bytes:
+    """
+    Recebe a imagem do avatar (PNG/JPG) e o áudio (WAV/MP3) em bytes,
+    roda o SadTalker e devolve o vídeo final (MP4) em bytes.
+    """
+    import subprocess
+    import tempfile
+    import os
+
+    with tempfile.TemporaryDirectory() as tmp:
+        img_path = os.path.join(tmp, "avatar.png")
+        audio_path = os.path.join(tmp, "audio.wav")
+        out_dir = os.path.join(tmp, "output")
+        os.makedirs(out_dir, exist_ok=True)
+
+        with open(img_path, "wb") as f:
+            f.write(image_bytes)
+        with open(audio_path, "wb") as f:
+            f.write(audio_bytes)
+
+        cmd = [
+            "python", "/sadtalker/inference.py",
+            "--driven_audio", audio_path,
+            "--source_image", img_path,
+            "--result_dir", out_dir,
+            "--still",  # menos movimento de cabeça, mais estável para avatar "apresentador"
+            "--preprocess", "full",
+            "--enhancer", "gfpgan",  # melhora nitidez do rosto
+        ]
+        subprocess.run(cmd, cwd="/sadtalker", check=True)
+
+        # SadTalker salva com nome baseado em timestamp; pega o mp4 mais recente
+        mp4_files = [f for f in os.listdir(out_dir) if f.endswith(".mp4")]
+        if not mp4_files:
+            raise RuntimeError("SadTalker não gerou nenhum vídeo de saída.")
+        result_path = os.path.join(out_dir, sorted(mp4_files)[-1])
+
+        with open(result_path, "rb") as f:
+            return f.read()
+
+
+@app.function(image=image)
+@modal.fastapi_endpoint(method="POST")
+def generate_endpoint(item: dict):
+    """
+    Endpoint HTTP chamado pelo GitHub Actions.
+    Espera JSON: {"image_url": "...", "audio_url": "..."}
+    (URLs pré-assinadas de um storage temporário, ex.: GitHub Release asset,
+    S3 presigned, ou similar — evita mandar base64 gigante no corpo do POST).
+    Devolve: {"video_base64": "..."}
+    """
+    import base64
+    import urllib.request
+
+    image_bytes = urllib.request.urlopen(item["image_url"]).read()
+    audio_bytes = urllib.request.urlopen(item["audio_url"]).read()
+
+    video_bytes = generate_avatar_video.remote(image_bytes, audio_bytes)
+
+    return {"video_base64": base64.b64encode(video_bytes).decode("utf-8")}
+
+
+@app.local_entrypoint()
+def main():
+    """Teste local: modal run modal_avatar.py"""
+    with open("assets/avatar.png", "rb") as f:
+        img = f.read()
+    with open("test_audio.wav", "rb") as f:
+        audio = f.read()
+
+    video = generate_avatar_video.remote(img, audio)
+    with open("output_avatar.mp4", "wb") as f:
+        f.write(video)
+    print("Vídeo gerado: output_avatar.mp4")
