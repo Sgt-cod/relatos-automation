@@ -1,0 +1,39 @@
+name: Deploy Modal (avatar lipsync)
+
+on:
+  workflow_dispatch: {}  # aparece um botão "Run workflow" na aba Actions
+  push:
+    paths:
+      - "modal_avatar.py"  # também roda automaticamente se você editar esse arquivo pelo navegador
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar CLI da Modal
+        run: pip install modal
+
+      - name: Autenticar com a Modal
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: modal token set --token-id "$MODAL_TOKEN_ID" --token-secret "$MODAL_TOKEN_SECRET"
+
+      - name: Publicar a função (modal deploy)
+        run: modal deploy modal_avatar.py | tee deploy_output.txt
+
+      - name: Mostrar a URL do endpoint
+        run: |
+          echo "----------------------------------------------------"
+          echo "Copie a URL abaixo e salve como o Secret MODAL_ENDPOINT_URL:"
+          grep -o 'https://[a-zA-Z0-9.-]*\.modal\.run[a-zA-Z0-9/_-]*' deploy_output.txt || echo "URL não encontrada no log — role o log completo acima manualmente."
+          echo "----------------------------------------------------"
