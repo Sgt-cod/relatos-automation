@@ -154,6 +154,7 @@ def download_video(youtube_url: str, output_path: str = "source_video.mp4") -> s
         cmd += ["--cookies", "cookies.txt"]
 
     cmd += [
+        "--remote-components", "ejs:github",  # autoriza o yt-dlp a baixar o script auxiliar (do próprio GitHub) que resolve o desafio de JS do YouTube
         "-f", "b[ext=mp4]/bv[ext=mp4]+ba[ext=m4a]/mp4",  # evita o aviso de formato e cobre mais casos
         "-o", output_path,
         youtube_url,
