@@ -26,20 +26,24 @@ jobs:
       - name: Instalar dependências
         run: pip install -r requirements.txt
 
+      - name: Instalar ffmpeg (necessário para compor o vídeo final após aprovação)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
       - name: Checar respostas no Telegram
         id: check
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python check_approvals_step.py
 
-      - name: Publicar vídeos aprovados
+      - name: Compor vídeo final e publicar
         if: steps.check.outputs.has_approved == 'true'
         env:
           YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
           YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
-        run: python publish_youtube.py
+        run: python finalize_and_publish.py
 
       - name: Commitar estado atualizado (offset + remoção de pendências)
         run: |
