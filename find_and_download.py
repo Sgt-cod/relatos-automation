@@ -40,16 +40,13 @@ from pipeline_config import (
     STATE_DIR,
     PROCESSED_VIDEOS_FILE,
 )
+from gemini_client import call_gemini
 
 YOUTUBE_API_KEY = os.environ["YOUTUBE_API_KEY"]
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
 YOUTUBE_SEARCH_URL = "https://www.googleapis.com/youtube/v3/search"
 YOUTUBE_VIDEOS_URL = "https://www.googleapis.com/youtube/v3/videos"
-GEMINI_URL = (
-    "https://generativelanguage.googleapis.com/v1beta/models/"
-    "gemini-3.7-flash:generateContent"
-)
 
 
 # ---------------------------------------------------------------------------
@@ -210,16 +207,10 @@ def find_tense_moment(transcript: list) -> dict:
         "Transcrição:\n" + transcript_text
     )
 
-    resp = requests.post(
-        f"{GEMINI_URL}?key={GEMINI_API_KEY}",
-        json={"contents": [{"parts": [{"text": prompt}]}]},
-        timeout=60,
-    )
-    resp.raise_for_status()
-    raw_text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+    resp_text = call_gemini(prompt, GEMINI_API_KEY)
 
     # Remove possíveis cercas de código (```json ... ```) antes de parsear
-    cleaned = raw_text.strip().strip("`").replace("json\n", "", 1)
+    cleaned = resp_text.strip().strip("`").replace("json\n", "", 1)
     return json.loads(cleaned)
 
 
