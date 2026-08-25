@@ -52,7 +52,7 @@ def generate_avatar_via_modal(image_path: str, audio_path: str, output_path: str
     resp = requests.post(
         MODAL_ENDPOINT_URL,
         json={"image_url": image_url, "audio_url": audio_url},
-        timeout=300,  # geração de vídeo pode levar alguns minutos
+        timeout=750,  # acima do timeout de 700s do endpoint na Modal
     )
 
     if resp.status_code != 200:
