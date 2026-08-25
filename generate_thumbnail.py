@@ -16,7 +16,8 @@ import random
 import requests
 from PIL import Image, ImageDraw, ImageFont
 
-AGNES_API_URL = "https://agnes-ai.com/v1/images/generations"  # endpoint OpenAI-compatible
+AGNES_API_URL = "https://apihub.agnes-ai.com/v1/images/generations"
+AGNES_MODEL = "agnes-image-2.0-flash"
 
 THUMB_W, THUMB_H = 1280, 720
 BANNER_HEIGHT = int(THUMB_H / 5)
@@ -40,11 +41,14 @@ def generate_agnes_portrait(api_key: str, out_path: str) -> str:
 
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     payload = {
-        "model": "agnes-image-2.1",
+        "model": AGNES_MODEL,
         "prompt": prompt,
         "size": "1024x1024",
+        # response_format vai dentro de extra_body — a API retorna erro 400
+        # se for colocado no nível raiz do corpo da requisição.
+        "extra_body": {"response_format": "url"},
     }
-    resp = requests.post(AGNES_API_URL, headers=headers, json=payload, timeout=60)
+    resp = requests.post(AGNES_API_URL, headers=headers, json=payload, timeout=120)
     resp.raise_for_status()
     data = resp.json()
 
