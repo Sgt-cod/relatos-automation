@@ -21,6 +21,11 @@ FISH_AUDIO_MODEL = os.environ.get("FISH_AUDIO_MODEL", "s2.1-pro-free")
 MAX_RETRIES = 3
 INITIAL_BACKOFF_SEC = 5
 
+# Códigos de erro transitórios do lado do servidor — vale tentar de novo.
+# 524 é específico da Cloudflare (proxy na frente da API da Fish Audio):
+# "A Timeout Occurred" — o servidor de origem demorou demais pra responder.
+RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504, 524}
+
 
 def generate_audio(script_text: str, voice_id: str, output_path: str) -> str:
     """
@@ -54,6 +59,12 @@ def generate_audio(script_text: str, voice_id: str, output_path: str) -> str:
             response = requests.post(
                 FISH_AUDIO_API_URL, headers=headers, json=payload, timeout=180
             )
+
+            if response.status_code in RETRYABLE_STATUS_CODES:
+                raise requests.exceptions.HTTPError(
+                    f"{response.status_code} (transitório)", response=response
+                )
+
             response.raise_for_status()
 
             with open(output_path, "wb") as f:
@@ -64,6 +75,16 @@ def generate_audio(script_text: str, voice_id: str, output_path: str) -> str:
         except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError) as e:
             last_error = e
             if attempt == MAX_RETRIES:
+                raise
+            wait = INITIAL_BACKOFF_SEC * (2 ** (attempt - 1))
+            print(f"[generate_audio] Tentativa {attempt}/{MAX_RETRIES} falhou "
+                  f"({e}). Tentando de novo em {wait}s...")
+            time.sleep(wait)
+
+        except requests.exceptions.HTTPError as e:
+            last_error = e
+            is_retryable = e.response is not None and e.response.status_code in RETRYABLE_STATUS_CODES
+            if not is_retryable or attempt == MAX_RETRIES:
                 raise
             wait = INITIAL_BACKOFF_SEC * (2 ** (attempt - 1))
             print(f"[generate_audio] Tentativa {attempt}/{MAX_RETRIES} falhou "
