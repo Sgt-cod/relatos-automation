@@ -12,6 +12,8 @@ jobs:
   check-and-publish:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: write  # necessário para o git push final (atualização de pending/)
     steps:
       - name: Checkout do repositório
         uses: actions/checkout@v4
