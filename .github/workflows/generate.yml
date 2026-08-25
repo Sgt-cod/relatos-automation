@@ -27,6 +27,17 @@ jobs:
       - name: Instalar ffmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
 
+      - name: Instalar Deno (necessário para o yt-dlp resolver desafios de JS do YouTube)
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Garantir yt-dlp na versão mais recente
+        run: pip install --upgrade yt-dlp
+        # A extração do YouTube muda com frequência e o yt-dlp lança
+        # correções constantemente — instalar sempre a versão mais nova
+        # reduz a chance desse tipo de erro voltar a acontecer.
+
       - name: 1. Buscar e baixar entrevista
         env:
           YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
