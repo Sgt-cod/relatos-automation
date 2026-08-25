@@ -12,6 +12,11 @@ import requests
 
 FISH_AUDIO_API_URL = "https://api.fish.audio/v1/tts"
 
+# "s2.1-pro-free" é o modelo gratuito da Fish Audio (mesma qualidade do
+# s2.1-pro pago). Sem esse header, a API cai por padrão no modelo pago
+# e retorna 402 Payment Required.
+FISH_AUDIO_MODEL = os.environ.get("FISH_AUDIO_MODEL", "s2.1-pro-free")
+
 
 def generate_audio(script_text: str, voice_id: str, output_path: str) -> str:
     """
@@ -28,6 +33,7 @@ def generate_audio(script_text: str, voice_id: str, output_path: str) -> str:
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
+        "model": FISH_AUDIO_MODEL,  # vai no header, não no body
     }
     payload = {
         "text": script_text,
