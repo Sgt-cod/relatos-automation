@@ -113,17 +113,29 @@ def generate_endpoint(item: dict):
     Espera JSON: {"image_url": "...", "audio_url": "..."}
     (URLs pré-assinadas de um storage temporário, ex.: GitHub Release asset,
     S3 presigned, ou similar — evita mandar base64 gigante no corpo do POST).
-    Devolve: {"video_base64": "..."}
+    Devolve: {"video_base64": "..."} em caso de sucesso, ou
+             {"error": "...", "traceback": "..."} com status 500 em caso de falha
+             — assim o erro real aparece direto no log do GitHub Actions, sem
+             precisar abrir o painel da Modal pra ver o traceback.
     """
     import base64
+    import traceback
     import urllib.request
+    from fastapi.responses import JSONResponse
 
-    image_bytes = urllib.request.urlopen(item["image_url"]).read()
-    audio_bytes = urllib.request.urlopen(item["audio_url"]).read()
+    try:
+        image_bytes = urllib.request.urlopen(item["image_url"]).read()
+        audio_bytes = urllib.request.urlopen(item["audio_url"]).read()
 
-    video_bytes = generate_avatar_video.remote(image_bytes, audio_bytes)
+        video_bytes = generate_avatar_video.remote(image_bytes, audio_bytes)
 
-    return {"video_base64": base64.b64encode(video_bytes).decode("utf-8")}
+        return {"video_base64": base64.b64encode(video_bytes).decode("utf-8")}
+
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e), "traceback": traceback.format_exc()},
+        )
 
 
 @app.local_entrypoint()
