@@ -48,19 +48,29 @@ image = (
     .run_commands(
         "git clone https://github.com/OpenTalker/SadTalker.git /sadtalker",
         "cd /sadtalker && bash scripts/download_models.sh || true",
+        # Pré-baixa os pesos auxiliares (face-alignment e GFPGAN) durante o
+        # BUILD da imagem, não em tempo de execução. Sem isso, a primeira
+        # chamada de cada worker novo baixaria ~400MB extras sob demanda,
+        # o que é uma causa comum de execuções lentas/instáveis.
+        "python -c \"import face_alignment; face_alignment.FaceAlignment(face_alignment.LandmarksType.TWO_D, device='cpu')\" || true",
+        "mkdir -p /sadtalker/gfpgan/weights && "
+        "wget -q -O /sadtalker/gfpgan/weights/GFPGANv1.4.pth "
+        "https://github.com/TencentARC/GFPGAN/releases/download/v1.3.0/GFPGANv1.4.pth || true",
     )
 )
 
-# Volume persistente para não re-baixar checkpoints a cada cold start
-checkpoints_volume = modal.Volume.from_name(
-    "sadtalker-checkpoints", create_if_missing=True
-)
+# NOTA: removido o Volume que antes era montado em /sadtalker/checkpoints.
+# Os checkpoints já são baixados DURANTE O BUILD da imagem (linha acima),
+# ficando permanentemente disponíveis nela. Um Volume vazio montado nesse
+# mesmo caminho em tempo de execução escondia esses arquivos (Volumes
+# sobrepõem o conteúdo da imagem no caminho em que são montados), forçando
+# a função a lidar com uma pasta de checkpoints vazia a cada execução —
+# provavelmente a causa raiz da lentidão/timeout observado.
 
 
 @app.function(
     image=image,
     gpu="A10G",  # bom custo-benefício para SadTalker; trocar para "T4" se quiser mais barato ainda
-    volumes={"/sadtalker/checkpoints": checkpoints_volume},
     timeout=600,  # 10 min de margem por geração
     scaledown_window=60,  # libera o worker 60s após ficar ocioso (evita cobrança de idle)
 )
@@ -91,7 +101,10 @@ def generate_avatar_video(image_bytes: bytes, audio_bytes: bytes) -> bytes:
             "--result_dir", out_dir,
             "--still",  # menos movimento de cabeça, mais estável para avatar "apresentador"
             "--preprocess", "full",
-            "--enhancer", "gfpgan",  # melhora nitidez do rosto
+            # --enhancer gfpgan removido por ora: dependência extra que pode
+            # baixar peso sob demanda / adicionar tempo de processamento.
+            # Reative depois de confirmar que o fluxo básico está estável:
+            # "--enhancer", "gfpgan",
         ]
         subprocess.run(cmd, cwd="/sadtalker", check=True)
 
