@@ -54,6 +54,18 @@ def generate_avatar_via_modal(image_path: str, audio_path: str, output_path: str
         json={"image_url": image_url, "audio_url": audio_url},
         timeout=300,  # geração de vídeo pode levar alguns minutos
     )
+
+    if resp.status_code != 200:
+        try:
+            error_data = resp.json()
+            print("---- Erro retornado pela função Modal ----")
+            print(f"Erro: {error_data.get('error')}")
+            print("Traceback completo:")
+            print(error_data.get("traceback", "(não disponível)"))
+            print("-------------------------------------------")
+        except ValueError:
+            print(f"Resposta não-JSON da Modal (status {resp.status_code}): {resp.text[:2000]}")
+
     resp.raise_for_status()
     video_b64 = resp.json()["video_base64"]
 
