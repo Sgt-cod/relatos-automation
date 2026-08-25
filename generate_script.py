@@ -21,13 +21,9 @@ salvaguarda principal antes de qualquer coisa ir ao ar.
 
 import os
 import json
-import requests
+from gemini_client import call_gemini
 
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
-GEMINI_URL = (
-    "https://generativelanguage.googleapis.com/v1beta/models/"
-    "gemini-3.7-flash:generateContent"
-)
 
 
 def build_prompt(source_meta: dict, transcript_excerpt: str) -> str:
@@ -69,14 +65,7 @@ def get_transcript_excerpt(transcript_path: str, center_sec: float, window_sec: 
 
 def generate_script(source_meta: dict, transcript_excerpt: str) -> str:
     prompt = build_prompt(source_meta, transcript_excerpt)
-
-    resp = requests.post(
-        f"{GEMINI_URL}?key={GEMINI_API_KEY}",
-        json={"contents": [{"parts": [{"text": prompt}]}]},
-        timeout=60,
-    )
-    resp.raise_for_status()
-    return resp.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+    return call_gemini(prompt, GEMINI_API_KEY).strip()
 
 
 def main():
