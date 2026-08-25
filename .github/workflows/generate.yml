@@ -12,7 +12,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 40
     permissions:
-      contents: write  # necessário para gh release upload (passo 4) e git push (final)
+      contents: write  # necessário para gh release upload (passos 4 e 6) e git push (final)
     steps:
       - name: Checkout do repositório
         uses: actions/checkout@v4
@@ -68,18 +68,16 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python call_modal_endpoint.py
 
-      - name: 5. Compor vídeo final (ffmpeg)
-        run: python compose_video.py
-
-      - name: 6. Gerar thumbnail
+      - name: 5. Gerar thumbnail
         env:
           AGNES_API_KEY: ${{ secrets.AGNES_API_KEY }}
         run: python generate_thumbnail.py
 
-      - name: 7. Enviar para aprovação no Telegram
+      - name: 6. Enviar para aprovação no Telegram (vídeo + thumbnail em separado)
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python send_approval_request.py
 
       - name: Salvar arquivos pendentes no repositório
