@@ -21,7 +21,7 @@ basta trocar o valor de GEMINI_MODEL aqui, em vez de em vários arquivos.
 import time
 import requests
 
-GEMINI_MODEL = "gemini-3.7-flash"
+GEMINI_MODEL = "gemini-3.1-flash"
 GEMINI_URL = (
     f"https://generativelanguage.googleapis.com/v1beta/models/"
     f"{GEMINI_MODEL}:generateContent"
