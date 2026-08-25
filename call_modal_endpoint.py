@@ -16,38 +16,14 @@ import os
 import base64
 import requests
 
+from github_storage import upload_to_github_release
+
 MODAL_ENDPOINT_URL = os.environ["MODAL_ENDPOINT_URL"]
 
 
-def upload_to_github_release(local_path: str, asset_name: str) -> str:
-    """
-    Sobe um arquivo como asset de uma release "scratch" do repositório e
-    devolve a URL pública de download. Forma simples de expor um arquivo
-    por URL sem precisar de outro serviço de storage.
-    Requer GITHUB_TOKEN com permissão de contents:write.
-    """
-    import subprocess
-    repo = os.environ["GITHUB_REPOSITORY"]
-    token = os.environ["GITHUB_TOKEN"]
-    tag = "pipeline-scratch"
-
-    # Garante que a release "scratch" existe (idempotente)
-    subprocess.run(
-        ["gh", "release", "create", tag, "--notes", "storage temporário do pipeline"],
-        env={**os.environ, "GH_TOKEN": token},
-        check=False,  # ignora erro se já existir
-    )
-    subprocess.run(
-        ["gh", "release", "upload", tag, local_path, f"--clobber"],
-        env={**os.environ, "GH_TOKEN": token},
-        check=True,
-    )
-    return f"https://github.com/{repo}/releases/download/{tag}/{os.path.basename(local_path)}"
-
-
 def generate_avatar_via_modal(image_path: str, audio_path: str, output_path: str) -> str:
-    image_url = upload_to_github_release(image_path, "avatar.png")
-    audio_url = upload_to_github_release(audio_path, "audio.wav")
+    image_url = upload_to_github_release(image_path, "avatar_source.png")
+    audio_url = upload_to_github_release(audio_path, "audio_source.wav")
 
     resp = requests.post(
         MODAL_ENDPOINT_URL,
