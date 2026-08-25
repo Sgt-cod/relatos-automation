@@ -105,7 +105,7 @@ def generate_avatar_video(image_bytes: bytes, audio_bytes: bytes) -> bytes:
             return f.read()
 
 
-@app.function(image=image)
+@app.function(image=image, timeout=700)  # margem acima do timeout de 600s da função interna
 @modal.fastapi_endpoint(method="POST")
 def generate_endpoint(item: dict):
     """
