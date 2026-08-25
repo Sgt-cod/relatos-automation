@@ -21,10 +21,12 @@ app = modal.App("avatar-lipsync")
 image = (
     modal.Image.debian_slim(python_version="3.10")
     .apt_install("ffmpeg", "libgl1", "git", "build-essential", "wget", "unzip")
-    # Estágio 1: numpy fixado ANTES do resto — vários pacotes desse ecossistema
-    # (face-alignment, gfpgan, resampy) ainda não são compatíveis com numpy 2.x
-    # e falham no build se o resolvedor do pip escolher a versão mais nova.
-    .pip_install("numpy<2", "setuptools", "wheel")
+    # Estágio 1: numpy fixado ANTES do resto — o SadTalker usa aliases
+    # antigos do numpy (np.float, np.int, np.bool, np.VisibleDeprecationWarning)
+    # removidos a partir do numpy 1.24. "numpy<2" sozinho não é suficiente
+    # (ainda permite 1.24-1.26, que já removeram esses aliases) — precisa
+    # ser uma versão específica anterior a isso.
+    .pip_install("numpy==1.23.5", "setuptools", "wheel")
     # Estágio 2: torch/torchvision/torchaudio com versões fixadas.
     # torchvision >= 0.17 removeu o módulo torchvision.transforms.functional_tensor,
     # que o basicsr (dependência do gfpgan, carregada mesmo sem usar o
@@ -49,13 +51,14 @@ image = (
     # na imagem para funções que usam @modal.fastapi_endpoint.
     .pip_install("fastapi[standard]")
     .run_commands(
-        # Reforça o pin do numpy<2 como ÚLTIMA palavra, depois de todas as
+        # Reforça o pin do numpy como ÚLTIMA palavra, depois de todas as
         # instalações acima. Cada .pip_install() é uma chamada de pip
         # separada, e alguma das etapas anteriores (torch, kornia, gfpgan
-        # etc.) pode ter puxado numpy 2.x como dependência transitiva,
-        # sobrescrevendo o pin original — o SadTalker usa uma API do numpy
-        # (np.VisibleDeprecationWarning) que só existe na série 1.x.
-        "pip install 'numpy<2' --force-reinstall --no-deps",
+        # etc.) pode ter puxado uma versão mais nova como dependência
+        # transitiva, sobrescrevendo o pin original — o SadTalker usa
+        # aliases antigos do numpy (np.float, np.VisibleDeprecationWarning)
+        # removidos a partir da 1.24, por isso a versão exata 1.23.5.
+        "pip install 'numpy==1.23.5' --force-reinstall --no-deps",
         "git clone https://github.com/OpenTalker/SadTalker.git /sadtalker",
         "cd /sadtalker && bash scripts/download_models.sh || true",
         # Pré-baixa os pesos auxiliares (face-alignment e GFPGAN) durante o
