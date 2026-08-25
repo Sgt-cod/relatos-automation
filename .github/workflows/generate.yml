@@ -10,7 +10,7 @@ on:
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
     permissions:
       contents: write  # necessário para gh release upload (passo 4) e git push (final)
     steps:
