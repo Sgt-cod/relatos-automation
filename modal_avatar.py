@@ -46,6 +46,13 @@ image = (
     # na imagem para funções que usam @modal.fastapi_endpoint.
     .pip_install("fastapi[standard]")
     .run_commands(
+        # Reforça o pin do numpy<2 como ÚLTIMA palavra, depois de todas as
+        # instalações acima. Cada .pip_install() é uma chamada de pip
+        # separada, e alguma das etapas anteriores (torch, kornia, gfpgan
+        # etc.) pode ter puxado numpy 2.x como dependência transitiva,
+        # sobrescrevendo o pin original — o SadTalker usa uma API do numpy
+        # (np.VisibleDeprecationWarning) que só existe na série 1.x.
+        "pip install 'numpy<2' --force-reinstall --no-deps",
         "git clone https://github.com/OpenTalker/SadTalker.git /sadtalker",
         "cd /sadtalker && bash scripts/download_models.sh || true",
         # Pré-baixa os pesos auxiliares (face-alignment e GFPGAN) durante o
