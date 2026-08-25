@@ -11,6 +11,8 @@ jobs:
   generate:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    permissions:
+      contents: write  # necessário para gh release upload (passo 4) e git push (final)
     steps:
       - name: Checkout do repositório
         uses: actions/checkout@v4
@@ -63,6 +65,7 @@ jobs:
       - name: 4. Gerar avatar via Modal (GPU externa)
         env:
           MODAL_ENDPOINT_URL: ${{ secrets.MODAL_ENDPOINT_URL }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python call_modal_endpoint.py
 
       - name: 5. Compor vídeo final (ffmpeg)
