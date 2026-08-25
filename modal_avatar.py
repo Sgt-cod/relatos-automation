@@ -106,7 +106,13 @@ def generate_avatar_video(image_bytes: bytes, audio_bytes: bytes) -> bytes:
             # Reative depois de confirmar que o fluxo básico está estável:
             # "--enhancer", "gfpgan",
         ]
-        subprocess.run(cmd, cwd="/sadtalker", check=True)
+        result = subprocess.run(cmd, cwd="/sadtalker", capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"SadTalker falhou com código {result.returncode}.\n"
+                f"---- stdout (últimas 3000 chars) ----\n{result.stdout[-3000:]}\n"
+                f"---- stderr (últimas 3000 chars) ----\n{result.stderr[-3000:]}"
+            )
 
         # SadTalker salva com nome baseado em timestamp; pega o mp4 mais recente
         mp4_files = [f for f in os.listdir(out_dir) if f.endswith(".mp4")]
