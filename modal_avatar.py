@@ -25,9 +25,12 @@ image = (
     # (face-alignment, gfpgan, resampy) ainda não são compatíveis com numpy 2.x
     # e falham no build se o resolvedor do pip escolher a versão mais nova.
     .pip_install("numpy<2", "setuptools", "wheel")
-    # Estágio 2: torch primeiro e sozinho — pacote pesado, isolar reduz
-    # chance de conflito de resolução com o restante.
-    .pip_install("torch", "torchvision", "torchaudio")
+    # Estágio 2: torch/torchvision/torchaudio com versões fixadas.
+    # torchvision >= 0.17 removeu o módulo torchvision.transforms.functional_tensor,
+    # que o basicsr (dependência do gfpgan, carregada mesmo sem usar o
+    # enhancer) ainda importa — sem fixar, a instalação pega a versão mais
+    # recente e quebra esse import. 0.16.2 é a última a manter esse módulo.
+    .pip_install("torch==2.1.2", "torchvision==0.16.2", "torchaudio==2.1.2")
     # Estágio 3: o restante das dependências do SadTalker
     .pip_install(
         "face-alignment",
