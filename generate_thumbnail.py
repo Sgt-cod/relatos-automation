@@ -92,7 +92,7 @@ def compose_thumbnail(
     frame_path: str,
     hook_text: str,
     output_path: str,
-    font_path: str = "assets/fonts/Anton-Regular.ttf",
+    font_path: str | None = None,
 ) -> str:
     """
     Monta a thumbnail final: retrato à esquerda, frame real à direita,
@@ -124,12 +124,43 @@ def compose_thumbnail(
         fill="#E60000",
     )
 
-    try:
-        font = ImageFont.truetype(font_path, size=64)
-    except OSError:
+    text = hook_text.upper()
+
+    # Fontes candidatas, em ordem de preferência (as duas indicadas pelo
+    # usuário, com fallback pra fonte padrão do sistema se nenhuma
+    # estiver disponível em assets/fonts/).
+    font_candidates = (
+        [font_path] if font_path else [
+            "assets/fonts/Bangers-Regular.ttf",
+            "assets/fonts/RoadRage-Regular.ttf",
+        ]
+    )
+
+    # Tamanho grande por padrão, com auto-shrink se o texto não couber
+    # na largura da faixa (evita estourar a thumbnail com ganchos longos).
+    font_size = 110
+    min_font_size = 60
+    font = None
+    chosen_font_path = None
+
+    for candidate_path in font_candidates:
+        try:
+            for size in range(font_size, min_font_size - 1, -6):
+                test_font = ImageFont.truetype(candidate_path, size=size)
+                bbox = draw.textbbox((0, 0), text, font=test_font)
+                text_w = bbox[2] - bbox[0]
+                if text_w <= THUMB_W - 60:  # margem de 30px de cada lado
+                    font = test_font
+                    chosen_font_path = candidate_path
+                    break
+            if font:
+                break
+        except OSError:
+            continue  # fonte não encontrada, tenta a próxima candidata
+
+    if font is None:
         font = ImageFont.load_default()
 
-    text = hook_text.upper()
     bbox = draw.textbbox((0, 0), text, font=font)
     text_w = bbox[2] - bbox[0]
     text_h = bbox[3] - bbox[1]
@@ -137,8 +168,12 @@ def compose_thumbnail(
     text_y = content_h + (BANNER_HEIGHT - text_h) // 2
 
     # contorno preto para legibilidade
-    for dx, dy in [(-2, -2), (-2, 2), (2, -2), (2, 2)]:
-        draw.text((text_x + dx, text_y + dy), text, font=font, fill="black")
+    outline_width = 4
+    for dx in range(-outline_width, outline_width + 1, 2):
+        for dy in range(-outline_width, outline_width + 1, 2):
+            if dx == 0 and dy == 0:
+                continue
+            draw.text((text_x + dx, text_y + dy), text, font=font, fill="black")
     draw.text((text_x, text_y), text, font=font, fill="white")
 
     canvas.save(output_path, quality=92)
