@@ -8,6 +8,7 @@ Requer variável de ambiente FISH_AUDIO_API_KEY.
 """
 
 import os
+import time
 import requests
 
 FISH_AUDIO_API_URL = "https://api.fish.audio/v1/tts"
@@ -17,10 +18,15 @@ FISH_AUDIO_API_URL = "https://api.fish.audio/v1/tts"
 # e retorna 402 Payment Required.
 FISH_AUDIO_MODEL = os.environ.get("FISH_AUDIO_MODEL", "s2.1-pro-free")
 
+MAX_RETRIES = 3
+INITIAL_BACKOFF_SEC = 5
+
 
 def generate_audio(script_text: str, voice_id: str, output_path: str) -> str:
     """
     Chama a API do Fish Audio (TTS) e salva o áudio resultante em output_path.
+    Faz retry automático em caso de timeout (o tier gratuito pode ser mais
+    lento em horários de pico).
 
     Args:
         script_text: o roteiro que o avatar vai "falar".
@@ -42,13 +48,29 @@ def generate_audio(script_text: str, voice_id: str, output_path: str) -> str:
         "normalize": True,
     }
 
-    response = requests.post(FISH_AUDIO_API_URL, headers=headers, json=payload, timeout=60)
-    response.raise_for_status()
+    last_error = None
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            response = requests.post(
+                FISH_AUDIO_API_URL, headers=headers, json=payload, timeout=180
+            )
+            response.raise_for_status()
 
-    with open(output_path, "wb") as f:
-        f.write(response.content)
+            with open(output_path, "wb") as f:
+                f.write(response.content)
 
-    return output_path
+            return output_path
+
+        except (requests.exceptions.ReadTimeout, requests.exceptions.ConnectionError) as e:
+            last_error = e
+            if attempt == MAX_RETRIES:
+                raise
+            wait = INITIAL_BACKOFF_SEC * (2 ** (attempt - 1))
+            print(f"[generate_audio] Tentativa {attempt}/{MAX_RETRIES} falhou "
+                  f"({e}). Tentando de novo em {wait}s...")
+            time.sleep(wait)
+
+    raise last_error  # pragma: no cover — inalcançável na prática
 
 
 if __name__ == "__main__":
