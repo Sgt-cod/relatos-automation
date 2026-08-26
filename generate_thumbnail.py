@@ -36,7 +36,11 @@ PROMPTS_MULHER = [
 
 
 def generate_agnes_portrait(api_key: str, out_path: str) -> str:
-    """Gera o retrato via Agnes AI, alternando gênero aleatoriamente."""
+    """Gera o retrato via Agnes AI, alternando gênero aleatoriamente.
+    Faz retry automático em caso de erro transitório do servidor
+    (503/502/500/429), do mesmo jeito que já fazemos com Gemini e Fish Audio."""
+    import time
+
     prompt = random.choice(PROMPTS_HOMEM if random.random() < 0.5 else PROMPTS_MULHER)
 
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
@@ -48,7 +52,23 @@ def generate_agnes_portrait(api_key: str, out_path: str) -> str:
         # se for colocado no nível raiz do corpo da requisição.
         "extra_body": {"response_format": "url"},
     }
-    resp = requests.post(AGNES_API_URL, headers=headers, json=payload, timeout=120)
+
+    retryable_status_codes = {429, 500, 502, 503, 504}
+    max_retries = 4
+    initial_backoff_sec = 5
+
+    resp = None
+    for attempt in range(1, max_retries + 1):
+        resp = requests.post(AGNES_API_URL, headers=headers, json=payload, timeout=120)
+        if resp.status_code not in retryable_status_codes:
+            break
+        if attempt == max_retries:
+            break
+        wait = initial_backoff_sec * (2 ** (attempt - 1))
+        print(f"[generate_thumbnail] Agnes retornou {resp.status_code} (tentativa "
+              f"{attempt}/{max_retries}). Tentando de novo em {wait}s...")
+        time.sleep(wait)
+
     resp.raise_for_status()
     data = resp.json()
 
