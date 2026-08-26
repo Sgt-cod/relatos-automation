@@ -142,9 +142,7 @@ def generate_avatar_video(image_bytes: bytes, audio_bytes: bytes) -> bytes:
 def generate_endpoint(item: dict):
     """
     Endpoint HTTP chamado pelo GitHub Actions.
-    Espera JSON: {"image_url": "...", "audio_url": "..."}
-    (URLs pré-assinadas de um storage temporário, ex.: GitHub Release asset,
-    S3 presigned, ou similar — evita mandar base64 gigante no corpo do POST).
+    Espera JSON: {"image_base64": "...", "audio_base64": "..."}
     Devolve: {"video_base64": "..."} em caso de sucesso, ou
              {"error": "...", "traceback": "..."} com status 500 em caso de falha
              — assim o erro real aparece direto no log do GitHub Actions, sem
@@ -152,12 +150,11 @@ def generate_endpoint(item: dict):
     """
     import base64
     import traceback
-    import urllib.request
     from fastapi.responses import JSONResponse
 
     try:
-        image_bytes = urllib.request.urlopen(item["image_url"]).read()
-        audio_bytes = urllib.request.urlopen(item["audio_url"]).read()
+        image_bytes = base64.b64decode(item["image_base64"])
+        audio_bytes = base64.b64decode(item["audio_base64"])
 
         video_bytes = generate_avatar_video.remote(image_bytes, audio_bytes)
 
