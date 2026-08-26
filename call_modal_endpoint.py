@@ -2,32 +2,29 @@
 call_modal_endpoint.py
 
 Chama o endpoint HTTP publicado pela Modal (modal_avatar.py, função
-generate_endpoint) para gerar o vídeo do avatar via GPU externa,
-sem precisar do SDK da Modal instalado no runner do GitHub Actions
-(só uma requisição HTTP simples).
+generate_endpoint) para gerar o vídeo do avatar via GPU externa.
 
-Pressupõe que a imagem (assets/avatar.png) e o áudio (gerado no passo
-anterior por generate_audio.py) já estejam acessíveis por URL pública
-temporária. Aqui usamos um release do próprio repositório como storage
-simples — dá pra trocar por outro esquema se preferir.
+Manda a imagem e o áudio como base64 direto no corpo da requisição —
+como ambos são pequenos (uma foto e um áudio de ~20s), não é necessário
+hospedar em storage intermediário só para a Modal buscar por URL.
 """
 
 import os
 import base64
 import requests
 
-from github_storage import upload_to_github_release
-
 MODAL_ENDPOINT_URL = os.environ["MODAL_ENDPOINT_URL"]
 
 
 def generate_avatar_via_modal(image_path: str, audio_path: str, output_path: str) -> str:
-    image_url = upload_to_github_release(image_path, "avatar_source.png")
-    audio_url = upload_to_github_release(audio_path, "audio_source.wav")
+    with open(image_path, "rb") as f:
+        image_b64 = base64.b64encode(f.read()).decode("utf-8")
+    with open(audio_path, "rb") as f:
+        audio_b64 = base64.b64encode(f.read()).decode("utf-8")
 
     resp = requests.post(
         MODAL_ENDPOINT_URL,
-        json={"image_url": image_url, "audio_url": audio_url},
+        json={"image_base64": image_b64, "audio_base64": audio_b64},
         timeout=750,  # acima do timeout de 700s do endpoint na Modal
     )
 
