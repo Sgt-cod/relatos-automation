@@ -90,6 +90,33 @@ def paste_arrow(canvas: Image.Image, center_x: int, center_y: int, arrow_path: s
     canvas.paste(arrow, (paste_x, paste_y), mask=arrow)  # usa o canal alfa como máscara
 
 
+def generate_hook_text(source_meta: dict, transcript_excerpt: str) -> str:
+    """
+    Pede pro Gemini um gancho curto e específico para a faixa de texto da
+    thumbnail — baseado no conteúdo real da entrevista, não numa lista
+    fixa de frases genéricas.
+    """
+    from gemini_client import call_gemini
+
+    api_key = os.environ["GEMINI_API_KEY"]
+    prompt = (
+        "Escreva UM gancho curto para a faixa de texto de uma thumbnail de "
+        "YouTube, sobre o trecho de entrevista abaixo. Regras:\n"
+        "- Entre 3 e 6 palavras. Vai em CAIXA ALTA na thumbnail (não precisa "
+        "escrever em maiúsculas, só responda o texto normal).\n"
+        "- Específico ao conteúdo real da transcrição — não genérico "
+        "(nunca algo como 'entrevista pega fogo' se isso não refletir o "
+        "que de fato foi dito).\n"
+        "- Não invente fatos que não estejam na transcrição, e não use "
+        "rótulos político-ideológicos.\n"
+        "- Pode usar um ângulo de curiosidade/impacto, mas sem sensacionalismo "
+        "vazio — precisa ser sustentável pelo conteúdo.\n\n"
+        f"Trecho da transcrição:\n{transcript_excerpt}\n\n"
+        "Responda APENAS com o texto do gancho, sem aspas, sem pontuação final."
+    )
+    return call_gemini(prompt, api_key).strip().strip('"').strip("'")
+
+
 def compose_thumbnail(
     portrait_path: str,
     frame_path: str,
@@ -183,14 +210,7 @@ def compose_thumbnail(
     return output_path
 
 
-HOOK_TEXTS = [
-    "A entrevista pegou fogo",
-    "Ele não esperava essa pergunta",
-    "Resposta chocou todo mundo",
-    "O clima mudou de repente",
-    "Ninguém esperava essa reação",
-    "A pergunta que ele não queria",
-]
+
 
 
 if __name__ == "__main__":
@@ -198,20 +218,26 @@ if __name__ == "__main__":
 
     with open("source_meta.json") as f:
         source_meta = json.load(f)
+    with open("transcript.json") as f:
+        transcript = json.load(f)
 
-    # O corte (interview_cut.mp4) foi centrado no momento de tensão, então
-    # o meio do próprio clipe já é um bom ponto para capturar o frame.
-    import subprocess as _sub
-    duration_result = _sub.run(
-        ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_format", "interview_cut.mp4"],
-        capture_output=True, text=True, check=True,
+    tense_moment = source_meta["tense_moment"]
+    clip_start_sec = source_meta["clip_start_sec"]
+
+    # Timestamp do frame RELATIVO ao clipe já cortado (interview_cut.mp4),
+    # não ao vídeo original — usa o fim da resposta tensa, que costuma ser
+    # o pico visual do embate.
+    frame_timestamp_in_clip = max(0.0, tense_moment["tense_end_sec"] - clip_start_sec)
+
+    transcript_excerpt = "\n".join(
+        seg["text"] for seg in transcript
+        if tense_moment["question_start_sec"] - 15 <= seg["start"] <= tense_moment["tense_end_sec"] + 15
     )
-    clip_duration = float(json.loads(duration_result.stdout)["format"]["duration"])
 
     portrait = generate_agnes_portrait(api_key, "portrait.jpg")
-    frame = extract_frame("interview_cut.mp4", timestamp_sec=clip_duration / 2, out_path="frame.jpg")
+    frame = extract_frame("interview_cut.mp4", timestamp_sec=frame_timestamp_in_clip, out_path="frame.jpg")
 
-    hook_text = random.choice(HOOK_TEXTS)
+    hook_text = generate_hook_text(source_meta, transcript_excerpt)
 
     compose_thumbnail(
         portrait_path=portrait,
