@@ -31,7 +31,7 @@ def compose_final_video(
     interview_path: str,
     avatar_path: str,
     output_path: str,
-    pip_scale: float = 0.35,
+    pip_scale: float = 1 / 6,
     pip_margin: int = 20,
 ) -> str:
     """
@@ -44,31 +44,22 @@ def compose_final_video(
     """
     avatar_duration = get_video_duration(avatar_path)
 
-    # Filtro:
-    # - [0:v] = entrevista (vídeo principal)
-    # - [1:v] = avatar (PiP)
-    # Durante os primeiros `avatar_duration` segundos:
-    #   - entrevista fica muda (volume=0 nesse trecho) e o avatar é sobreposto
-    # Depois disso:
-    #   - só a entrevista, com áudio original
+    # Estratégia: gerar dois clipes separados e concatenar, em vez de um
+    # único filtro condicional por tempo (mais simples e evita edge cases
+    # de sincronismo):
+    # 1. Clipe A = entrevista muda (0 a avatar_duration) + áudio do avatar, com o avatar em PiP
+    # 2. Clipe B = entrevista original a partir de avatar_duration até o fim
+    # 3. Concatena A + B
     #
-    # Estratégia: usar overlay com enable='between(t,0,avatar_duration)'
-    # e volume automatizado via filtro 'volume' com expressão de tempo.
-
-    filter_complex = (
-        f"[1:v]scale=iw*{pip_scale}:ih*{pip_scale}[pip];"
-        f"[0:v][pip]overlay=x={pip_margin}:y={pip_margin}:"
-        f"enable='between(t,0,{avatar_duration})'[vout];"
-        f"[0:a]volume=enable='between(t,0,{avatar_duration})':volume=0[muted_part];"
-        f"[1:a]apad[avatar_audio_padded];"
-    )
-
-    # Para simplificar e evitar bugs de sincronismo de áudio com filtros
-    # condicionais complexos, a abordagem mais robusta na prática é:
-    # 1. Gerar um clipe A = entrevista mudo (0 a avatar_duration) + áudio do avatar
-    # 2. Gerar um clipe B = entrevista original a partir de avatar_duration até o fim
-    # 3. Concatenar A + B
-    # Isso evita edge cases de overlay/volume condicionados por tempo.
+    # IMPORTANTE: o concat demuxer do ffmpeg com "-c copy" exige que os
+    # dois clipes tenham exatamente os MESMOS parâmetros de áudio (taxa de
+    # amostragem, canais, codec) — como o áudio do clipe A vem do Fish
+    # Audio/SadTalker e o do clipe B vem da entrevista original, eles
+    # costumam ter parâmetros diferentes por padrão. Sem forçar os dois a
+    # usarem os mesmos parâmetros aqui, um dos trechos pode sair mudo na
+    # concatenação final. Por isso ambos os comandos abaixo fixam
+    # explicitamente -ar/-ac/-c:a.
+    AUDIO_PARAMS = ["-ar", "48000", "-ac", "2", "-c:a", "aac", "-b:a", "192k"]
 
     cmd_clip_a_video = [
         "ffmpeg", "-y",
@@ -81,7 +72,8 @@ def compose_final_video(
         "-map", "[vout]",
         "-map", "1:a",  # áudio do avatar (Fish Audio) durante essa parte
         "-t", str(avatar_duration),
-        "-c:v", "libx264", "-c:a", "aac",
+        "-c:v", "libx264",
+        *AUDIO_PARAMS,
         "clip_a.mp4",
     ]
 
@@ -89,7 +81,8 @@ def compose_final_video(
         "ffmpeg", "-y",
         "-i", interview_path,
         "-ss", str(avatar_duration),
-        "-c:v", "libx264", "-c:a", "aac",
+        "-c:v", "libx264",
+        *AUDIO_PARAMS,
         "clip_b.mp4",
     ]
 
