@@ -11,6 +11,11 @@ on:
         description: "Minutos de espera pela aprovação no Telegram antes de cancelar"
         required: false
         default: "60"
+      use_modal:
+        description: "Usar avatar via Modal (SadTalker)? Se desmarcado, usa o vídeo local do apresentador (assets/presenter.mp4) com o áudio gerado."
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   generate:
@@ -67,10 +72,15 @@ jobs:
           FISH_AUDIO_VOICE_ID: ${{ secrets.FISH_AUDIO_VOICE_ID }}
         run: python generate_audio.py
 
-      - name: 4. Gerar avatar via Modal (GPU externa)
+      - name: 4a. Gerar avatar via Modal (GPU externa) — só em disparo manual com use_modal=true
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.use_modal == true }}
         env:
           MODAL_ENDPOINT_URL: ${{ secrets.MODAL_ENDPOINT_URL }}
         run: python call_modal_endpoint.py
+
+      - name: 4b. Gerar clipe do apresentador (vídeo local + áudio) — padrão em execuções automáticas
+        if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.use_modal == true) }}
+        run: python create_presenter_clip.py
 
       - name: 5. Gerar thumbnail
         env:
