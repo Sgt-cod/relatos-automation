@@ -12,6 +12,7 @@ de composição fixa).
 
 import subprocess
 import json
+import os
 
 
 def get_video_duration(path: str) -> float:
@@ -27,12 +28,53 @@ def get_video_duration(path: str) -> float:
     return float(data["format"]["duration"])
 
 
+def apply_frame_overlay(
+    video_path: str,
+    output_path: str,
+    moldura_path: str = "assets/moldura.png",
+) -> str:
+    """
+    Sobrepõe a moldura (PNG com centro transparente) por cima do vídeo
+    inteiro, do início ao fim — o vídeo aparece através do buraco
+    transparente, e a moldura fica fixa por cima como borda/identidade
+    visual do canal.
+
+    Usa scale2ref para redimensionar a moldura automaticamente para o
+    mesmo tamanho do vídeo, seja qual for a resolução (não fica hardcoded
+    numa resolução específica).
+    """
+    if not os.path.exists(moldura_path):
+        print(f"[compose_video] Aviso: moldura não encontrada em {moldura_path} — "
+              f"vídeo final ficará sem moldura.")
+        import shutil
+        shutil.copyfile(video_path, output_path)
+        return output_path
+
+    subprocess.run(
+        [
+            "ffmpeg", "-y",
+            "-i", video_path,
+            "-loop", "1", "-i", moldura_path,  # -loop 1: repete essa imagem estática por toda a duração
+            "-filter_complex",
+            "[1:v][0:v]scale2ref[frame][base];"  # redimensiona a moldura pro tamanho exato do vídeo
+            "[base][frame]overlay=0:0:format=auto",
+            "-c:v", "libx264",
+            "-c:a", "copy",  # áudio já está correto, só recopia
+            "-shortest",  # encerra quando o vídeo (mais curto que a imagem em loop) terminar
+            output_path,
+        ],
+        check=True,
+    )
+    return output_path
+
+
 def compose_final_video(
     interview_path: str,
     avatar_path: str,
     output_path: str,
     pip_scale: float = 1 / 6,
     pip_margin: int = 20,
+    moldura_path: str = "assets/moldura.png",
 ) -> str:
     """
     Args:
@@ -99,9 +141,12 @@ def compose_final_video(
         "-f", "concat", "-safe", "0",
         "-i", "concat_list.txt",
         "-c", "copy",
-        output_path,
+        "concat_no_frame.mp4",
     ]
     subprocess.run(cmd_concat, check=True)
+
+    # Última etapa: aplica a moldura por cima do vídeo já concatenado
+    apply_frame_overlay("concat_no_frame.mp4", output_path, moldura_path=moldura_path)
 
     return output_path
 
