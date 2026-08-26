@@ -74,6 +74,28 @@ composição/publicação). Isso consome minutos do seu plano do GitHub Actions
 de forma mais concentrada, mas dentro do limite gratuito mensal isso não
 costuma ser um problema para um pipeline de baixo volume.
 
+## Avatar: Modal (opcional) vs. vídeo local do apresentador (padrão)
+
+Por padrão (execuções automáticas via cron), o pipeline **não usa a
+Modal**. Em vez disso, `create_presenter_clip.py` pega um vídeo longo já
+gravado do apresentador (`assets/presenter.mp4` — ele gesticulando, com
+nariz e boca mascarados) e só troca o áudio original pelo áudio gerado
+(roteiro + Fish Audio):
+- Se o vídeo for mais curto que o áudio, repete em loop até cobrir a
+  duração inteira.
+- Se for mais longo, corta um trecho do tamanho exato do áudio, a partir
+  de um ponto aleatório (varia o trecho usado a cada execução).
+
+A rota via Modal (SadTalker, lipsync realista) continua disponível, mas
+só quando você dispara o workflow manualmente (aba Actions > "Run
+workflow") e marca a opção `use_modal`. Nesse caso, o campo
+`approval_timeout_min` do mesmo disparo também vale, então dá pra
+ajustar os dois de uma vez ao rodar manualmente.
+
+Os dois caminhos produzem o mesmo arquivo de saída (`output_avatar.mp4`),
+então o resto do pipeline (composição do vídeo final, thumbnail, etc.)
+funciona igual independente de qual dos dois gerou o clipe.
+
 ## Comportamento em caso de timeout
 
 Diferente de outra pipeline do usuário (que publica automaticamente após 1h
@@ -97,8 +119,9 @@ pipeline_config.py            # canais monitorados, janelas de tempo, etc.
 find_and_download.py          # busca, baixa, transcreve e corta a entrevista
 gemini_client.py               # chamada ao Gemini com retry automático
 generate_script.py             # roteiro do avatar via Gemini (com salvaguardas)
-modal_avatar.py                # função Modal (GPU) que roda o SadTalker
-call_modal_endpoint.py         # chama o endpoint da Modal (imagem/áudio em base64)
+create_presenter_clip.py       # PADRÃO: vídeo local do apresentador + áudio (sem Modal)
+modal_avatar.py                # função Modal (GPU) que roda o SadTalker — OPCIONAL, só via disparo manual
+call_modal_endpoint.py         # chama o endpoint da Modal (imagem/áudio em base64) — OPCIONAL
 generate_audio.py              # TTS via Fish Audio (com retry automático)
 compose_video.py               # ffmpeg: monta avatar em PiP + entrevista
 generate_thumbnail.py          # Agnes (retrato) + frame + seta (PNG) + faixa de texto
@@ -116,7 +139,9 @@ publish_youtube.py             # upload final no YouTube
    `RoadRage-Regular.ttf` em `assets/fonts/`.
 4. **Seta da thumbnail**: coloque uma imagem PNG com fundo transparente,
    apontando para a direita, em `assets/arrow_right.png`.
-5. **Avatar**: imagem em `assets/avatar.png`.
+5. **Avatar**: imagem em `assets/avatar.png` (usada só se rodar com Modal)
+   e vídeo em `assets/presenter.mp4` (usado por padrão — o apresentador
+   gesticulando, com nariz e boca mascarados).
 6. **Autorização OAuth2 do YouTube** (veja `GUIA_APIS.md`, seção 4).
 7. **`YOUTUBE_COOKIES`** (veja `GUIA_APIS.md`, seção 6) — necessário para o
    `yt-dlp` não ser bloqueado pelo YouTube.
