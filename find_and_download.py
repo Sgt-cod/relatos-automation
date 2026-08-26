@@ -189,9 +189,11 @@ def transcribe(video_path: str) -> list:
 
 def find_tense_moment(transcript: list) -> dict:
     """
-    Envia a transcrição (com timestamps) para o Gemini e pede o ponto
-    central do trecho mais tenso/de maior divergência entre os
-    participantes. Retorna {"center_sec": float, "reason": str}.
+    Envia a transcrição (com timestamps) para o Gemini e pede o INÍCIO da
+    pergunta que provocou a resposta mais tensa/divergente e o momento em
+    que essa resposta se encerra. Diferente de um único "ponto central",
+    isso garante que o corte final comece na pergunta, não já na resposta.
+    Retorna {"question_start_sec": float, "tense_end_sec": float, "reason": str}.
     """
     transcript_text = "\n".join(
         f"[{seg['start']:.0f}s] {seg['text']}" for seg in transcript
@@ -199,11 +201,18 @@ def find_tense_moment(transcript: list) -> dict:
 
     prompt = (
         "Você vai analisar a transcrição de uma entrevista, com marcações "
-        "de tempo em segundos. Identifique o momento de MAIOR tensão, "
+        "de tempo em segundos. Identifique o trecho de MAIOR tensão, "
         "divergência ou confronto entre os participantes (ex.: pergunta "
-        "difícil, resposta evasiva, discordância explícita, interrupção). "
+        "difícil, resposta evasiva, discordância explícita, interrupção).\n\n"
+        "Aponte DOIS momentos:\n"
+        "1. question_start_sec: o segundo em que a PERGUNTA (ou comentário "
+        "do entrevistador) que provocou essa tensão COMEÇA — não o segundo "
+        "da resposta, o da pergunta em si.\n"
+        "2. tense_end_sec: o segundo em que a resposta tensa/o embate "
+        "termina (ou se estabiliza).\n\n"
         "Responda APENAS em JSON, no formato exato:\n"
-        '{"center_sec": <número>, "reason": "<explicação breve, 1 frase>"}\n\n'
+        '{"question_start_sec": <número>, "tense_end_sec": <número>, '
+        '"reason": "<explicação breve, 1 frase>"}\n\n'
         "Transcrição:\n" + transcript_text
     )
 
@@ -220,21 +229,33 @@ def find_tense_moment(transcript: list) -> dict:
 
 def cut_clip(
     video_path: str,
-    center_sec: float,
+    question_start_sec: float,
+    tense_end_sec: float,
     total_duration_sec: float,
     output_path: str = "interview_cut.mp4",
     clip_duration_sec: float = CLIP_DURATION_SEC,
-) -> str:
-    half = clip_duration_sec / 2
-    start = max(0, center_sec - half)
-    end = min(total_duration_sec, center_sec + half)
+    lead_in_sec: float = 5.0,
+) -> dict:
+    """
+    Corta o vídeo começando um pouco ANTES da pergunta (lead_in_sec, para
+    dar contexto) e terminando depois do fim da resposta tensa, esticando
+    o restante do tempo (até clip_duration_sec) preferencialmente para
+    DEPOIS do embate, para não arriscar cortar a pergunta pela metade.
 
-    # Se bateu numa borda, estica pro outro lado para manter a duração alvo
+    Retorna {"output_path", "start_sec", "end_sec"} — o start_sec é
+    necessário depois (generate_thumbnail.py) para saber onde, dentro do
+    CLIPE JÁ CORTADO, fica o momento de tensão original.
+    """
+    start = max(0, question_start_sec - lead_in_sec)
+    min_end = min(total_duration_sec, tense_end_sec + 5.0)  # pequena margem depois do embate
+
+    end = max(min_end, start + clip_duration_sec)
+    end = min(end, total_duration_sec)
+
+    # Se ainda faltar duração pra bater o alvo (ex.: bateu no fim do vídeo),
+    # tenta esticar pra trás, mas nunca além do início da pergunta.
     if end - start < clip_duration_sec:
-        if start == 0:
-            end = min(total_duration_sec, clip_duration_sec)
-        elif end == total_duration_sec:
-            start = max(0, total_duration_sec - clip_duration_sec)
+        start = max(0, min(start, end - clip_duration_sec))
 
     subprocess.run(
         [
@@ -247,7 +268,7 @@ def cut_clip(
         ],
         check=True,
     )
-    return output_path
+    return {"output_path": output_path, "start_sec": start, "end_sec": end}
 
 
 # ---------------------------------------------------------------------------
@@ -264,9 +285,10 @@ def main():
     tense_moment = find_tense_moment(transcript)
     print(f"Trecho de tensão identificado: {tense_moment}")
 
-    cut_clip(
+    cut_result = cut_clip(
         video_path="source_video.mp4",
-        center_sec=tense_moment["center_sec"],
+        question_start_sec=tense_moment["question_start_sec"],
+        tense_end_sec=tense_moment["tense_end_sec"],
         total_duration_sec=candidate["duration_sec"],
     )
 
@@ -279,7 +301,10 @@ def main():
         f.write(internal_id)
 
     with open("source_meta.json", "w") as f:
-        json.dump({**candidate, "tense_moment": tense_moment}, f, ensure_ascii=False, indent=2)
+        json.dump(
+            {**candidate, "tense_moment": tense_moment, "clip_start_sec": cut_result["start_sec"]},
+            f, ensure_ascii=False, indent=2,
+        )
 
     processed = _load_processed()
     processed.add(candidate["video_id"])
