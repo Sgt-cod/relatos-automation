@@ -74,17 +74,20 @@ def extract_frame(video_path: str, timestamp_sec: float, out_path: str) -> str:
     return out_path
 
 
-def draw_arrow(draw: ImageDraw.Draw, start, end, width=8, color="#FFD400"):
-    """Desenha uma seta estilizada entre dois pontos."""
-    draw.line([start, end], fill=color, width=width)
-    # cabeça da seta
-    import math
-    angle = math.atan2(end[1] - start[1], end[0] - start[0])
-    arrow_len = 25
-    for da in (0.4, -0.4):
-        ax = end[0] - arrow_len * math.cos(angle - da)
-        ay = end[1] - arrow_len * math.sin(angle - da)
-        draw.line([end, (ax, ay)], fill=color, width=width)
+def paste_arrow(canvas: Image.Image, center_x: int, center_y: int, arrow_path: str, width: int = 160) -> None:
+    """
+    Cola a imagem da seta (PNG com fundo transparente) centralizada em
+    (center_x, center_y), redimensionada para a largura desejada mantendo
+    a proporção original.
+    """
+    arrow = Image.open(arrow_path).convert("RGBA")
+    ratio = width / arrow.width
+    height = int(arrow.height * ratio)
+    arrow = arrow.resize((width, height))
+
+    paste_x = center_x - width // 2
+    paste_y = center_y - height // 2
+    canvas.paste(arrow, (paste_x, paste_y), mask=arrow)  # usa o canal alfa como máscara
 
 
 def compose_thumbnail(
@@ -93,10 +96,11 @@ def compose_thumbnail(
     hook_text: str,
     output_path: str,
     font_path: str | None = None,
+    arrow_path: str = "assets/arrow_right.png",
 ) -> str:
     """
     Monta a thumbnail final: retrato à esquerda, frame real à direita,
-    seta conectando os dois, faixa de texto na base.
+    seta (imagem PNG) conectando os dois, faixa de texto na base.
     """
     canvas = Image.new("RGB", (THUMB_W, THUMB_H), "black")
 
@@ -109,14 +113,13 @@ def compose_thumbnail(
     canvas.paste(portrait, (0, 0))
     canvas.paste(frame, (half_w, 0))
 
-    draw = ImageDraw.Draw(canvas)
-
     # Seta do centro do retrato até o começo do frame real
-    draw_arrow(
-        draw,
-        start=(half_w - 90, content_h // 2),
-        end=(half_w + 15, content_h // 2),
-    )
+    try:
+        paste_arrow(canvas, center_x=half_w, center_y=content_h // 2, arrow_path=arrow_path)
+    except (FileNotFoundError, OSError):
+        print(f"[generate_thumbnail] Aviso: seta não encontrada em {arrow_path} — thumbnail sem seta.")
+
+    draw = ImageDraw.Draw(canvas)
 
     # Faixa de texto na base (1/5 da altura)
     draw.rectangle(
