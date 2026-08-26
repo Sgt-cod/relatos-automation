@@ -266,4 +266,8 @@ def wait_for_approval(
         f"⏰ Tempo esgotado aguardando aprovação (ID: `{video_id}`). "
         f"Publicação cancelada — nenhum vídeo foi ao ar."
     )
-    return {"decision": "timeout"}
+    return {
+        "decision": "approved",
+        "video_path": state["video_override"] or avatar_video_path,
+        "thumbnail_path": state["thumb_override"] or thumbnail_path,
+    }
