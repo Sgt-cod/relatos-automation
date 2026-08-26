@@ -1,18 +1,24 @@
-name: Gerar vídeo
+name: Gerar, aprovar e publicar vídeo
 
 on:
   schedule:
     # Ajuste os horários depois de decidir a frequência.
     # Exemplo: roda às 9h e às 15h (horário UTC — ajuste para BRT, UTC-3).
     - cron: "0 12,18 * * *"
-  workflow_dispatch: {}  # permite disparar manualmente pelo GitHub também
+  workflow_dispatch:
+    inputs:
+      approval_timeout_min:
+        description: "Minutos de espera pela aprovação no Telegram antes de cancelar"
+        required: false
+        default: "60"
 
 jobs:
   generate:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
-    permissions:
-      contents: write  # necessário para gh release upload (passos 4 e 6) e git push (final)
+    # Folga generosa: geração (~15-20min) + espera pela aprovação (até 60min
+    # por padrão) + composição/publicação (~5min). Ajuste se mudar o timeout
+    # de aprovação abaixo.
+    timeout-minutes: 100
     steps:
       - name: Checkout do repositório
         uses: actions/checkout@v4
@@ -23,8 +29,7 @@ jobs:
           python-version: "3.11"
 
       - name: Instalar dependências
-        run: |
-          pip install -r requirements.txt
+        run: pip install -r requirements.txt
 
       - name: Instalar ffmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
@@ -65,7 +70,6 @@ jobs:
       - name: 4. Gerar avatar via Modal (GPU externa)
         env:
           MODAL_ENDPOINT_URL: ${{ secrets.MODAL_ENDPOINT_URL }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python call_modal_endpoint.py
 
       - name: 5. Gerar thumbnail
@@ -73,17 +77,12 @@ jobs:
           AGNES_API_KEY: ${{ secrets.AGNES_API_KEY }}
         run: python generate_thumbnail.py
 
-      - name: 6. Enviar para aprovação no Telegram (vídeo + thumbnail em separado)
+      - name: 6. Aprovar no Telegram, compor vídeo final e publicar
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: python send_approval_request.py
-
-      - name: Salvar arquivos pendentes no repositório
-        run: |
-          git config user.name "pipeline-bot"
-          git config user.email "pipeline-bot@users.noreply.github.com"
-          git add pending/
-          git commit -m "Vídeo pendente de aprovação: $(date -u +%Y%m%d-%H%M%S)" || echo "Nada para commitar"
-          git push
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          APPROVAL_TIMEOUT_MIN: ${{ github.event.inputs.approval_timeout_min || '60' }}
+        run: python approve_compose_publish.py
