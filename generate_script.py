@@ -39,26 +39,37 @@ def build_prompt(source_meta: dict, transcript_excerpt: str) -> str:
         "transcrição.\n"
         "- Não use rótulos político-ideológicos para descrever os "
         "participantes (ex.: 'jornalista de esquerda/direita').\n"
-        "- Tom: instigante e direto, tipo chamada de telejornal, mas sem "
-        "alegações que a transcrição não sustenta.\n"
-        "- Gancho de curiosidade permitido (ex.: 'o que ele respondeu a "
+        "- SEJA ESPECÍFICO, não genérico: cite pelo menos um detalhe concreto "
+        "da transcrição (um número, uma citação curta parafraseada, um nome, "
+        "um fato mencionado) — nunca escreva algo que poderia servir para "
+        "qualquer entrevista, tipo 'o convidado respondeu uma pergunta "
+        "direta sobre o tema mais debatido da semana'. Isso é o oposto do "
+        "que queremos: o roteiro deve deixar claro do QUE se trata essa "
+        "entrevista específica.\n"
+        "- Tom: instigante, com energia de chamada de telejornal — varie a "
+        "abertura a cada roteiro (não comece sempre do mesmo jeito, tipo "
+        "'Nessa entrevista...'). Pode abrir com o fato mais forte, uma "
+        "pergunta retórica, ou uma contradição levantada na entrevista.\n"
+        "- Gancho de curiosidade permitido (ex.: 'a resposta que ele deu a "
         "seguir gerou repercussão'), desde que não seja uma afirmação "
         "factual não verificável.\n\n"
         f"Veículo: {source_meta['channel']}\n"
         f"Título original: {source_meta['title']}\n\n"
-        f"Trecho da transcrição (momento de maior tensão):\n{transcript_excerpt}\n\n"
+        f"Trecho da transcrição (pergunta + resposta mais tensa):\n{transcript_excerpt}\n\n"
         "Responda apenas com o texto do roteiro, sem aspas, sem markdown, "
         "sem explicações adicionais."
     )
 
 
-def get_transcript_excerpt(transcript_path: str, center_sec: float, window_sec: float = 60) -> str:
+def get_transcript_excerpt(
+    transcript_path: str, start_sec: float, end_sec: float, window_sec: float = 30
+) -> str:
     with open(transcript_path) as f:
         transcript = json.load(f)
 
     excerpt_segments = [
         seg for seg in transcript
-        if center_sec - window_sec <= seg["start"] <= center_sec + window_sec
+        if start_sec - window_sec <= seg["start"] <= end_sec + window_sec
     ]
     return "\n".join(seg["text"] for seg in excerpt_segments)
 
@@ -72,9 +83,11 @@ def main():
     with open("source_meta.json") as f:
         source_meta = json.load(f)
 
+    tense_moment = source_meta["tense_moment"]
     transcript_excerpt = get_transcript_excerpt(
         "transcript.json",
-        center_sec=source_meta["tense_moment"]["center_sec"],
+        start_sec=tense_moment["question_start_sec"],
+        end_sec=tense_moment["tense_end_sec"],
     )
 
     script_text = generate_script(source_meta, transcript_excerpt)
