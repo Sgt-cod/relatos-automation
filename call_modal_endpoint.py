@@ -51,7 +51,7 @@ def generate_avatar_via_modal(image_path: str, audio_path: str, output_path: str
 if __name__ == "__main__":
     generate_avatar_via_modal(
         image_path="assets/avatar.png",
-        audio_path="test_audio.wav",
+        audio_path="audio.wav",
         output_path="output_avatar.mp4",
     )
     print("Vídeo do avatar gerado: output_avatar.mp4")
