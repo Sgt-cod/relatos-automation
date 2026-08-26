@@ -95,14 +95,12 @@ def generate_audio(script_text: str, voice_id: str, output_path: str) -> str:
 
 
 if __name__ == "__main__":
-    # Exemplo de uso isolado, para teste manual
-    roteiro = (
-        "Nessa entrevista, o convidado respondeu a uma pergunta direta "
-        "sobre o tema mais debatido da semana. Vamos ver como foi."
-    )
+    with open("script.txt") as f:
+        script_text = f.read().strip()
+
     generate_audio(
-        script_text=roteiro,
-        voice_id=os.environ.get("FISH_AUDIO_VOICE_ID", "default-voice-id"),
-        output_path="test_audio.wav",
+        script_text=script_text,
+        voice_id=os.environ["FISH_AUDIO_VOICE_ID"],
+        output_path="audio.wav",
     )
-    print("Áudio gerado: test_audio.wav")
+    print(f"Áudio gerado: audio.wav\nTexto usado:\n{script_text}")
