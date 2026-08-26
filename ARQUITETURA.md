@@ -2,149 +2,125 @@
 
 ## Fluxo completo
 
+Tudo roda num **workflow único** (`.github/workflows/generate.yml`), num
+único job do GitHub Actions, do início ao fim — incluindo a espera pela
+sua aprovação no Telegram.
+
 ```
-[cron GitHub Actions]
+[cron ou disparo manual]
         │
         ▼
-1. Buscar vídeo (canal de notícias) — busca por entrevistas recentes
+1. Buscar vídeo de entrevista nos canais configurados, baixar, transcrever
+   e cortar o trecho de maior tensão (~6,5 min)
         │
         ▼
-2. Baixar corte de 6-7 min (trecho com divergência/tensão)
+2. Gemini escreve o roteiro do avatar (com salvaguardas contra alucinação)
         │
         ▼
-3. Gemini escreve o roteiro do avatar (comentário de abertura)
+3. Fish Audio gera o áudio (TTS) a partir do roteiro
         │
         ▼
-4. Fish Audio gera o áudio (TTS) a partir do roteiro
+4. Modal (GPU externa) roda o SadTalker → vídeo do avatar com lipsync
         │
         ▼
-5. Modal (GPU) roda SadTalker → vídeo do avatar com lipsync
+5. Agnes AI gera o retrato + frame do vídeo + seta + faixa de texto → thumbnail
         │
         ▼
-6. ffmpeg compõe o vídeo final (avatar em PiP + entrevista)
+6. Telegram: envia vídeo do avatar E thumbnail, cada um com botões
+   próprios de aprovação        ◄── CHECKPOINT HUMANO
         │
-        ▼
-7. Agnes AI gera retrato + frame do vídeo + seta + faixa de texto → thumbnail
+        ├── Rejeitado sem substituto + botão "Cancelar" → encerra, nada é publicado
+        ├── Rejeitado + substituto enviado (vídeo/imagem) → usa o substituto
+        ├── Sem resposta dentro do timeout (padrão 60 min) → CANCELA (não publica)
         │
-        ▼
-8. Telegram: envia roteiro + thumbnail para aprovação  ◄── CHECKPOINT HUMANO
-        │
-        ├── Rejeitado → descarta, fim
-        │
-        └── Aprovado (clique no botão)
+        └── Ambos os itens aprovados
                 │
                 ▼
-        [repository_dispatch dispara 2º workflow]
+        7. Compõe o vídeo final (ffmpeg, avatar em PiP + entrevista)
                 │
                 ▼
-        9. Publica no YouTube (API do YouTube Data v3)
+        8. Publica no YouTube (API do YouTube Data v3)
 ```
 
-## Por que dois workflows (não um só)
+## Por que um workflow só (não dois)
 
-O GitHub Actions não tem como "pausar" um job esperando aprovação humana de
-forma eficiente — ficaria consumindo minutos à toa. Por isso o desenho usa
-dois workflows separados, ambos disparados por cron (sem webhook, sem
-infra externa — mesmo modelo de polling que suas outras pipelines já usam):
+Uma versão anterior deste pipeline usava dois workflows separados: um para
+gerar o conteúdo, outro rodando em cron a cada 5 min para checar respostas
+no Telegram. Essa abordagem tinha um problema real: **workflows agendados
+(`schedule`) no GitHub Actions não têm garantia de disparar no horário
+exato** — o próprio GitHub documenta que execuções podem atrasar ou até ser
+puladas em períodos de carga alta, especialmente em repositórios com pouca
+atividade. Na prática, isso fazia cliques de aprovação no Telegram ficarem
+sem resposta.
 
-- **Workflow A** (`.github/workflows/generate.yml`): roda no cron principal
-  (ex.: 2x/dia), faz os passos 1-8, e termina após mandar a notificação no
-  Telegram. Salva o estado "pendente" como arquivo no próprio repositório
-  (`pending/{video_id}.json`).
-- **Workflow B** (`.github/workflows/check_approval.yml`): roda em cron
-  curto (a cada 5 min — intervalo mínimo permitido pelo GitHub Actions),
-  consulta o Telegram via `getUpdates` (polling simples, sem webhook),
-  cruza com os pendentes salvos no repo, e publica no YouTube se algo foi
-  aprovado.
+A solução foi seguir o mesmo padrão de uma pipeline mais madura do próprio
+usuário: um **loop de espera bloqueante dentro do mesmo job** (consultando
+o Telegram a cada poucos segundos via `getUpdates`), em vez de depender de
+um segundo workflow agendado. Isso elimina a dependência do cron de 5 em 5
+min e também simplifica bastante o resto do sistema:
 
-### Por que não precisa de Cloudflare/webhook
+- Não precisa mais de storage intermediário (releases do GitHub) para
+  passar arquivos entre workflows — tudo fica no mesmo runner, do início
+  ao fim.
+- A chamada à Modal manda a imagem/áudio como base64 direto no corpo da
+  requisição, em vez de hospedar por URL.
+- Não precisa mais de `git commit`/`git push` de estado intermediário
+  (`pending/*.json`) — o estado da aprovação vive só na memória do
+  processo Python durante a execução do job.
 
-Telegram tem dois modos de receber atualizações: **webhook** (o Telegram
-te avisa ativamente, precisa de uma URL pública sempre no ar) ou
-**polling via `getUpdates`** (você pergunta periodicamente "tem algo
-novo?"). Como o workflow B já roda em cron, ele naturalmente encaixa no
-modo polling — sem precisar manter nenhum servidor ou função externa no
-ar. É uma checagem HTTP simples, igual a qualquer chamada de API que suas
-outras pipelines já fazem.
+**Trade-off aceito**: o job do GitHub Actions fica com timeout mais alto
+(padrão 100 min, pra caber até 60 min de espera pela aprovação + geração +
+composição/publicação). Isso consome minutos do seu plano do GitHub Actions
+de forma mais concentrada, mas dentro do limite gratuito mensal isso não
+costuma ser um problema para um pipeline de baixo volume.
 
-A troca é: com webhook a resposta seria quase instantânea; com polling a
-cada 5 min, o atraso entre você clicar "Aprovar" e o vídeo realmente ir ao
-ar é de até 5 minutos. Para esse caso de uso (aprovar um vídeo antes de
-publicar), esse atraso é irrelevante.
+## Comportamento em caso de timeout
+
+Diferente de outra pipeline do usuário (que publica automaticamente após 1h
+sem resposta), aqui o padrão é **cancelar** se o timeout for atingido sem
+aprovação completa dos dois itens. A justificativa: o conteúdo é sensível
+(entrevista/notícia política com avatar realista comentando), então
+publicar sem revisão humana confirmada não é o comportamento desejado —
+mesmo que isso signifique perder a janela de um dia sem publicar nada.
+
+O tempo de espera é configurável: ao disparar manualmente o workflow (aba
+Actions > "Run workflow"), há um campo para ajustar os minutos de espera.
+Rodando via cron, usa o padrão de 60 min.
 
 ## Arquivos deste pacote
 
 ```
 .github/workflows/
-  generate.yml            # Workflow A: cron principal, gera tudo até o Telegram
-  check_approval.yml      # Workflow B: cron a cada 5 min, checa e publica
-pipeline_config.py         # canais monitorados, janelas de tempo, etc.
-find_and_download.py       # busca, baixa, transcreve e corta a entrevista
-generate_script.py         # roteiro do avatar via Gemini (com salvaguardas)
-modal_avatar.py            # função Modal (GPU) que roda o SadTalker
-call_modal_endpoint.py     # chama o endpoint HTTP da Modal a partir do Actions
-generate_audio.py          # TTS via Fish Audio
-compose_video.py           # ffmpeg: monta avatar em PiP + entrevista
-generate_thumbnail.py      # Agnes (retrato) + frame + seta + faixa de texto
-telegram_approval.py       # envio do pedido + checagem por polling (getUpdates)
-send_approval_request.py   # wiring do passo 7 do generate.yml
-check_approvals_step.py    # wiring do check_approval.yml
-publish_youtube.py         # upload final no YouTube, só roda se aprovado
+  generate.yml              # workflow único: geração → aprovação → publicação
+  deploy_modal.yml           # deploy da função Modal (roda quando modal_avatar.py muda)
+pipeline_config.py            # canais monitorados, janelas de tempo, etc.
+find_and_download.py          # busca, baixa, transcreve e corta a entrevista
+gemini_client.py               # chamada ao Gemini com retry automático
+generate_script.py             # roteiro do avatar via Gemini (com salvaguardas)
+modal_avatar.py                # função Modal (GPU) que roda o SadTalker
+call_modal_endpoint.py         # chama o endpoint da Modal (imagem/áudio em base64)
+generate_audio.py              # TTS via Fish Audio (com retry automático)
+compose_video.py               # ffmpeg: monta avatar em PiP + entrevista
+generate_thumbnail.py          # Agnes (retrato) + frame + seta (PNG) + faixa de texto
+telegram_approval.py           # envio + loop de espera por aprovação individual
+approve_compose_publish.py     # junta aprovação + composição + publicação
+publish_youtube.py             # upload final no YouTube
 ```
-
-## Como find_and_download.py identifica o "trecho de tensão"
-
-1. Busca vídeos recentes (últimos `MAX_VIDEO_AGE_DAYS` dias) nos canais
-   configurados, filtrando por palavra-chave ("entrevista") via YouTube
-   Data API.
-2. Baixa o vídeo com `yt-dlp` e transcreve com `faster-whisper` (roda em
-   CPU, modelo "base" — suficiente para identificar o trecho, não precisa
-   de precisão de legenda profissional).
-3. Manda a transcrição completa (com timestamps) para o Gemini, pedindo
-   que aponte o momento de maior tensão/divergência — a resposta vem em
-   JSON com o segundo central do trecho.
-4. Corta ~6,5 min ao redor desse ponto com `ffmpeg`.
-
-Vídeos já processados ficam registrados em `state/processed_videos.json`
-(committado de volta ao repo pelo workflow), para não repetir a mesma
-entrevista em execuções futuras.
-
-## Salvaguardas no roteiro do avatar (generate_script.py)
-
-Como o roteiro é escrito por um LLM e vai virar fala de um avatar
-realista, o prompt tem restrições explícitas: só descrever o que está
-literalmente na transcrição, não atribuir motivação/estado emocional a
-ninguém, e não usar rótulos político-ideológicos. Isso reduz o risco de
-alucinação chegar até o Telegram — mas a revisão humana antes de aprovar
-continua sendo a salvaguarda principal, então vale sempre ler o roteiro
-com atenção antes de clicar "Aprovar".
 
 ## Pontas soltas para você decidir
 
 1. **`CHANNELS` em `pipeline_config.py`**: preencha os Channel IDs reais
-   (não é o @handle) dos 5 canais. O jeito mais fácil é usar a própria
-   YouTube Data API (`channels.list?forHandle=@nomedocanal`) ou inspecionar
-   o código-fonte da página do canal.
-2. **Voz do Fish Audio**: precisa de um `reference_id` de voz — você já tem
-   uma escolhida/clonada?
-3. **Fonte para a faixa de texto da thumbnail**: usei "Anton" como exemplo
-   (fonte grátis, estilo bold, comum em thumbs de YouTube). Baixe o `.ttf` e
-   coloque em `assets/fonts/`.
-4. **Autorização inicial do YouTube (OAuth2)**: `publish_youtube.py`
-   precisa de um `refresh_token` já autorizado. Esse primeiro login é
-   manual (tela de consentimento do Google) — não dá pra automatizar; é
-   feito uma vez só, fora do pipeline.
-5. **Storage temporário imagem/áudio → Modal**: usei uma *release* do
-   próprio repositório como forma simples de expor a imagem/áudio por URL
-   pública para o endpoint da Modal baixar. Funciona, mas deixa esses
-   arquivos temporariamente públicos no GitHub. Se preferir mais
-   privacidade, dá pra trocar por URLs pré-assinadas de algum bucket
-   gratuito (ex.: Cloudflare R2 tem free tier generoso).
-6. **Download do vídeo fonte**: como esses são conteúdos de emissoras com
-   direitos reservados, reforço o ponto que já conversamos — vale limitar a
-   fontes com licença mais clara (lives oficiais, canais institucionais) para
-   reduzir risco de strike no canal.
-7. **Tempo de execução do workflow A**: transcrição em CPU (`faster-whisper`)
-   de um vídeo de ~15-20 min costuma levar alguns minutos no runner padrão
-   do GitHub Actions. Se os vídeos-fonte forem mais longos, pode ser
-   necessário aumentar o `timeout-minutes` do job em `generate.yml`.
+   dos 5 canais (veja o `GUIA_APIS.md`, seção 5).
+2. **Voz do Fish Audio** (`FISH_AUDIO_VOICE_ID`).
+3. **Fontes da thumbnail**: coloque `Bangers-Regular.ttf` e/ou
+   `RoadRage-Regular.ttf` em `assets/fonts/`.
+4. **Seta da thumbnail**: coloque uma imagem PNG com fundo transparente,
+   apontando para a direita, em `assets/arrow_right.png`.
+5. **Avatar**: imagem em `assets/avatar.png`.
+6. **Autorização OAuth2 do YouTube** (veja `GUIA_APIS.md`, seção 4).
+7. **`YOUTUBE_COOKIES`** (veja `GUIA_APIS.md`, seção 6) — necessário para o
+   `yt-dlp` não ser bloqueado pelo YouTube.
+8. **Download do vídeo fonte**: como esses são conteúdos de emissoras com
+   direitos reservados, vale considerar priorizar fontes com licença mais
+   clara (lives oficiais, canais institucionais) para reduzir risco de
+   problema com os veículos de imprensa.
