@@ -75,6 +75,7 @@ jobs:
       - name: 5. Gerar thumbnail
         env:
           AGNES_API_KEY: ${{ secrets.AGNES_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: python generate_thumbnail.py
 
       - name: 6. Aprovar no Telegram, compor vídeo final e publicar
