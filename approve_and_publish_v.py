@@ -20,8 +20,8 @@ import sys
 import json
 
 from telegram_approval import TelegramApproval, send_scripts_for_approval, wait_for_scripts_approval
-from generate_intervention_audios import generate_intervention_audios
-from generate_intervention_clips import generate_intervention_clips
+from generate_intervention_audios import generate_all_audios
+from generate_intervention_clips import generate_all_clips
 from compose_video import compose_video_with_interventions
 from publish_youtube import publish_video
 
@@ -53,27 +53,29 @@ def main():
         print(f"Publicação não realizada (decisão: {result['decision']}).")
         sys.exit(0)  # não é falha do workflow — é uma decisão válida do usuário
 
-    print("✅ Aprovado! Gerando áudio de cada intervenção...")
-    audio_paths = generate_intervention_audios(interventions)
+    print("✅ Aprovado! Gerando áudio de cada parte do roteiro...")
+    audios = generate_all_audios(interventions)
 
     print("🎭 Gerando clipes do personagem...")
-    clip_paths = generate_intervention_clips(audio_paths)
+    clips = generate_all_clips(audios)
 
-    interventions_with_clips = [
+    mid_interventions_with_clips = [
         {"timestamp_sec": it["timestamp_sec"], "clip_path": clip_path}
-        for it, clip_path in zip(interventions, clip_paths)
+        for it, clip_path in zip(interventions["mid"], clips["mid_clips"])
     ]
 
     print("🎬 Compondo vídeo final...")
     compose_video_with_interventions(
         highlight_path="highlight_cut.mp4",
-        interventions_with_clips=interventions_with_clips,
+        opening_clip_path=clips["opening_clip"],
+        mid_interventions_with_clips=mid_interventions_with_clips,
+        closing_clip_path=clips["closing_clip"],
         output_path="final_video.mp4",
         clip_start_sec=source_meta["clip_start_sec"],
     )
 
     title = f"{source_meta['title']} | Análise"[:100]  # limite do YouTube
-    topics = "; ".join(it["topic"] for it in interventions)
+    topics = "; ".join(it["topic"] for it in interventions["mid"])
     description = (
         f"Comentários sobre: {topics}\n\n"
         f"Fonte: {source_meta['channel']}\n\n"
