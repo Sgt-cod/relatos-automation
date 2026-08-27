@@ -2,24 +2,25 @@
 find_and_download.py
 
 Passo 1 do generate.yml:
-1. Busca vídeos recentes de entrevista nos canais configurados
-   (YouTube Data API v3 — search.list).
+1. Busca vídeos políticos recentes (entrevistas, discursos, debates,
+   coletivas etc.) nos canais configurados (YouTube Data API v3).
 2. Escolhe o primeiro candidato ainda não processado.
 3. Baixa o vídeo (yt-dlp).
 4. Transcreve com timestamps (faster-whisper, roda em CPU).
-5. Pede pro Gemini apontar o trecho de maior tensão/divergência na
-   transcrição (retorna start/end em segundos).
-6. Corta esse trecho com ffmpeg, gerando ~6-7 min de clipe
-   (interview_cut.mp4), com padding ao redor do ponto identificado.
+5. Pede pro Gemini apontar a JANELA de destaque (não mais um único
+   momento) com o conteúdo político mais denso do vídeo.
+6. Corta essa janela com ffmpeg, gerando highlight_cut.mp4 — é dentro
+   dela que find_intervention_moments.py depois escolhe os pontos
+   específicos de intervenção do personagem.
 7. Salva video_id.txt (usado pelos passos seguintes) e marca o vídeo
    como processado em state/processed_videos.json.
 
 Saídas usadas pelos próximos passos do workflow:
-    interview_cut.mp4   -> corte final da entrevista
+    highlight_cut.mp4   -> corte da janela de destaque
     transcript.json      -> transcrição completa com timestamps
     video_id.txt          -> identificador único usado no pipeline inteiro
-    source_meta.json      -> título/canal/URL do vídeo original (para
-                             descrição do YouTube e contexto do roteiro)
+    source_meta.json      -> título/canal/URL do vídeo original + janela
+                             de destaque (para os próximos passos)
 """
 
 import os
@@ -36,7 +37,7 @@ from pipeline_config import (
     MAX_VIDEO_AGE_DAYS,
     MIN_SOURCE_DURATION_SEC,
     MAX_SOURCE_DURATION_SEC,
-    CLIP_DURATION_SEC,
+    HIGHLIGHT_DURATION_SEC,
     STATE_DIR,
     PROCESSED_VIDEOS_FILE,
 )
@@ -184,35 +185,36 @@ def transcribe(video_path: str) -> list:
 
 
 # ---------------------------------------------------------------------------
-# 5. Identificar trecho de tensão via Gemini
+# 5. Identificar a melhor janela de destaque via Gemini
 # ---------------------------------------------------------------------------
 
-def find_tense_moment(transcript: list) -> dict:
+def find_highlight_window(transcript: list, target_duration_sec: float) -> dict:
     """
-    Envia a transcrição (com timestamps) para o Gemini e pede o INÍCIO da
-    pergunta que provocou a resposta mais tensa/divergente e o momento em
-    que essa resposta se encerra. Diferente de um único "ponto central",
-    isso garante que o corte final comece na pergunta, não já na resposta.
-    Retorna {"question_start_sec": float, "tense_end_sec": float, "reason": str}.
+    Envia a transcrição completa (com timestamps) para o Gemini e pede a
+    janela CONTÍNUA de ~target_duration_sec com o conteúdo político mais
+    denso/relevante do vídeo (declarações fortes, contradições, embates,
+    pontos que rendem boa análise) — não precisa ser um único confronto,
+    é a "melhor parte" do vídeo como um todo, de onde depois vamos tirar
+    vários momentos específicos para o personagem comentar.
+    Retorna {"start_sec": float, "end_sec": float, "reason": str}.
     """
     transcript_text = "\n".join(
         f"[{seg['start']:.0f}s] {seg['text']}" for seg in transcript
     )
 
     prompt = (
-        "Você vai analisar a transcrição de uma entrevista, com marcações "
-        "de tempo em segundos. Identifique o trecho de MAIOR tensão, "
-        "divergência ou confronto entre os participantes (ex.: pergunta "
-        "difícil, resposta evasiva, discordância explícita, interrupção).\n\n"
-        "Aponte DOIS momentos:\n"
-        "1. question_start_sec: o segundo em que a PERGUNTA (ou comentário "
-        "do entrevistador) que provocou essa tensão COMEÇA — não o segundo "
-        "da resposta, o da pergunta em si.\n"
-        "2. tense_end_sec: o segundo em que a resposta tensa/o embate "
-        "termina (ou se estabiliza).\n\n"
+        "Você vai analisar a transcrição de um vídeo político (entrevista, "
+        "discurso, debate, coletiva, sessão legislativa etc.), com "
+        "marcações de tempo em segundos. Identifique a janela CONTÍNUA de "
+        f"aproximadamente {target_duration_sec:.0f} segundos com o "
+        "conteúdo mais denso e relevante do vídeo — declarações fortes, "
+        "contradições, embates, promessas, dados citados, pontos "
+        "polêmicos ou que renderiam boa análise crítica. Não precisa ser "
+        "um único confronto isolado; pode ser o trecho com mais MOMENTOS "
+        "interessantes juntos.\n\n"
         "Responda APENAS em JSON, no formato exato:\n"
-        '{"question_start_sec": <número>, "tense_end_sec": <número>, '
-        '"reason": "<explicação breve, 1 frase>"}\n\n'
+        '{"start_sec": <número>, "end_sec": <número>, '
+        '"reason": "<explicação breve, 1-2 frases>"}\n\n'
         "Transcrição:\n" + transcript_text
     )
 
@@ -227,35 +229,32 @@ def find_tense_moment(transcript: list) -> dict:
 # 6. Corte com ffmpeg
 # ---------------------------------------------------------------------------
 
-def cut_clip(
+def cut_highlight(
     video_path: str,
-    question_start_sec: float,
-    tense_end_sec: float,
+    start_sec: float,
+    end_sec: float,
     total_duration_sec: float,
-    output_path: str = "interview_cut.mp4",
-    clip_duration_sec: float = CLIP_DURATION_SEC,
-    lead_in_sec: float = 5.0,
+    output_path: str = "highlight_cut.mp4",
+    target_duration_sec: float = HIGHLIGHT_DURATION_SEC,
 ) -> dict:
     """
-    Corta o vídeo começando um pouco ANTES da pergunta (lead_in_sec, para
-    dar contexto) e terminando depois do fim da resposta tensa, esticando
-    o restante do tempo (até clip_duration_sec) preferencialmente para
-    DEPOIS do embate, para não arriscar cortar a pergunta pela metade.
+    Corta a janela de destaque identificada pelo Gemini. Se a janela
+    devolvida for menor que target_duration_sec, estica um pouco pros dois
+    lados (sem passar dos limites do vídeo original) pra aproveitar melhor
+    o tempo de transcrição já feito.
 
-    Retorna {"output_path", "start_sec", "end_sec"} — o start_sec é
-    necessário depois (generate_thumbnail.py) para saber onde, dentro do
-    CLIPE JÁ CORTADO, fica o momento de tensão original.
+    Retorna {"output_path", "start_sec", "end_sec"} — o start_sec é usado
+    depois (generate_thumbnail.py, find_intervention_moments.py) para
+    converter timestamps do vídeo original para timestamps relativos ao
+    CLIPE JÁ CORTADO.
     """
-    start = max(0, question_start_sec - lead_in_sec)
-    min_end = min(total_duration_sec, tense_end_sec + 5.0)  # pequena margem depois do embate
+    start = max(0, start_sec)
+    end = min(total_duration_sec, end_sec)
 
-    end = max(min_end, start + clip_duration_sec)
-    end = min(end, total_duration_sec)
-
-    # Se ainda faltar duração pra bater o alvo (ex.: bateu no fim do vídeo),
-    # tenta esticar pra trás, mas nunca além do início da pergunta.
-    if end - start < clip_duration_sec:
-        start = max(0, min(start, end - clip_duration_sec))
+    if end - start < target_duration_sec:
+        missing = target_duration_sec - (end - start)
+        start = max(0, start - missing / 2)
+        end = min(total_duration_sec, end + missing / 2)
 
     subprocess.run(
         [
@@ -282,13 +281,13 @@ def main():
     download_video(candidate["url"])
     transcript = transcribe("source_video.mp4")
 
-    tense_moment = find_tense_moment(transcript)
-    print(f"Trecho de tensão identificado: {tense_moment}")
+    highlight_window = find_highlight_window(transcript, HIGHLIGHT_DURATION_SEC)
+    print(f"Janela de destaque identificada: {highlight_window}")
 
-    cut_result = cut_clip(
+    cut_result = cut_highlight(
         video_path="source_video.mp4",
-        question_start_sec=tense_moment["question_start_sec"],
-        tense_end_sec=tense_moment["tense_end_sec"],
+        start_sec=highlight_window["start_sec"],
+        end_sec=highlight_window["end_sec"],
         total_duration_sec=candidate["duration_sec"],
     )
 
@@ -302,7 +301,11 @@ def main():
 
     with open("source_meta.json", "w") as f:
         json.dump(
-            {**candidate, "tense_moment": tense_moment, "clip_start_sec": cut_result["start_sec"]},
+            {
+                **candidate,
+                "highlight_window": highlight_window,
+                "clip_start_sec": cut_result["start_sec"],
+            },
             f, ensure_ascii=False, indent=2,
         )
 
@@ -310,7 +313,7 @@ def main():
     processed.add(candidate["video_id"])
     _save_processed(processed)
 
-    print(f"Corte pronto: interview_cut.mp4 (id interno: {internal_id})")
+    print(f"Corte pronto: highlight_cut.mp4 (id interno: {internal_id})")
 
 
 if __name__ == "__main__":
