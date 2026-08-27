@@ -50,8 +50,10 @@ MAX_SOURCE_DURATION_SEC = 60 * 60
 # personagem acontecem ao longo dela, não só uma introdução.
 HIGHLIGHT_DURATION_SEC = 12 * 60
 
-# Quantas intervenções do personagem mascarado por vídeo publicado.
-N_INTERVENTIONS = 4
+# Quantas intervenções CRÍTICAS (no meio do vídeo, em PiP) por vídeo
+# publicado — não conta abertura nem despedida, que são sempre 1 cada,
+# em tela cheia.
+N_MID_INTERVENTIONS = 3
 
 STATE_DIR = "state"
 PROCESSED_VIDEOS_FILE = f"{STATE_DIR}/processed_videos.json"
