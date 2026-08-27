@@ -68,6 +68,146 @@ def apply_frame_overlay(
     return output_path
 
 
+def compose_video_with_interventions(
+    highlight_path: str,
+    interventions_with_clips: list,
+    output_path: str,
+    clip_start_sec: float,
+    pip_scale: float = 1 / 6,
+    pip_margin: int = 20,
+    moldura_path: str = "assets/moldura.png",
+) -> str:
+    """
+    Monta o vídeo final intercalando o trecho de destaque com N
+    intervenções do personagem: base -> intervenção -> base ->
+    intervenção -> ... -> base final.
+
+    Em cada intervenção, o vídeo de base CONGELA num frame parado (não
+    fica mudo tocando por baixo — a ideia aqui é uma "pausa" pra comentário,
+    diferente do desenho anterior de PiP sobre vídeo rodando) e o
+    personagem aparece em PiP por cima, falando o áudio daquele trecho.
+
+    Args:
+        highlight_path: vídeo de destaque já cortado (highlight_cut.mp4).
+        interventions_with_clips: lista de dicts
+            {"timestamp_sec": float (relativo ao VÍDEO ORIGINAL),
+             "clip_path": str (caminho do intervention_clip_N.mp4)},
+            em qualquer ordem — a função ordena por timestamp internamente.
+        clip_start_sec: o quanto o highlight_path foi cortado a partir do
+            vídeo original (source_meta["clip_start_sec"]) — usado pra
+            converter os timestamps das intervenções pra tempo relativo
+            ao highlight_path.
+    """
+    AUDIO_PARAMS = ["-ar", "48000", "-ac", "2", "-c:a", "aac", "-b:a", "192k"]
+
+    highlight_duration = get_video_duration(highlight_path)
+
+    # Converte timestamps para o tempo relativo ao highlight_path, e
+    # ordena cronologicamente (defensivo — já deveria vir ordenado).
+    items = sorted(interventions_with_clips, key=lambda x: x["timestamp_sec"])
+    rel_points = [
+        max(0.0, min(highlight_duration, it["timestamp_sec"] - clip_start_sec))
+        for it in items
+    ]
+
+    segment_files = []
+    cursor = 0.0
+
+    for i, (item, rel_ts) in enumerate(zip(items, rel_points)):
+        # --- Segmento de base ANTES desta intervenção ---
+        base_duration = max(0.0, rel_ts - cursor)
+        if base_duration > 0.3:  # ignora segmentos irrisórios (evita erro do ffmpeg com duração ~0)
+            base_seg_path = f"base_seg_{i}.mp4"
+            subprocess.run(
+                [
+                    "ffmpeg", "-y",
+                    "-ss", str(cursor),
+                    "-i", highlight_path,
+                    "-t", str(base_duration),
+                    "-c:v", "libx264",
+                    *AUDIO_PARAMS,
+                    base_seg_path,
+                ],
+                check=True,
+            )
+            segment_files.append(base_seg_path)
+
+        # --- Segmento de intervenção: frame congelado + PiP do personagem ---
+        frame_path = f"freeze_frame_{i}.jpg"
+        subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-ss", str(rel_ts),
+                "-i", highlight_path,
+                "-frames:v", "1",
+                "-q:v", "2",
+                frame_path,
+            ],
+            check=True,
+        )
+
+        clip_duration = get_video_duration(item["clip_path"])
+        intervention_seg_path = f"intervention_seg_{i}.mp4"
+        subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-loop", "1", "-i", frame_path,       # [0] frame congelado, em loop
+                "-i", item["clip_path"],               # [1] clipe do personagem (vídeo + áudio)
+                "-filter_complex",
+                f"[1:v]scale=iw*{pip_scale}:ih*{pip_scale}[pip];"
+                f"[0:v][pip]overlay=x={pip_margin}:y={pip_margin}[vout]",
+                "-map", "[vout]",
+                "-map", "1:a",
+                "-t", str(clip_duration),
+                "-c:v", "libx264",
+                *AUDIO_PARAMS,
+                intervention_seg_path,
+            ],
+            check=True,
+        )
+        segment_files.append(intervention_seg_path)
+
+        cursor = rel_ts
+
+    # --- Segmento final de base, depois da última intervenção ---
+    final_duration = max(0.0, highlight_duration - cursor)
+    if final_duration > 0.3:
+        final_seg_path = "base_seg_final.mp4"
+        subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-ss", str(cursor),
+                "-i", highlight_path,
+                "-c:v", "libx264",
+                *AUDIO_PARAMS,
+                final_seg_path,
+            ],
+            check=True,
+        )
+        segment_files.append(final_seg_path)
+
+    # --- Concatena todos os segmentos, na ordem ---
+    with open("concat_list.txt", "w") as f:
+        for seg in segment_files:
+            f.write(f"file '{seg}'\n")
+
+    subprocess.run(
+        [
+            "ffmpeg", "-y",
+            "-f", "concat", "-safe", "0",
+            "-i", "concat_list.txt",
+            "-c", "copy",
+            "concat_no_frame.mp4",
+        ],
+        check=True,
+    )
+
+    # Última etapa: aplica a moldura por cima do vídeo já concatenado
+    apply_frame_overlay("concat_no_frame.mp4", output_path, moldura_path=moldura_path)
+
+    return output_path
+
+
 def compose_final_video(
     interview_path: str,
     avatar_path: str,
@@ -153,7 +293,7 @@ def compose_final_video(
 
 if __name__ == "__main__":
     compose_final_video(
-        interview_path="interview_cut.mp4",
+        interview_path="highlight_cut.mp4",
         avatar_path="output_avatar.mp4",
         output_path="final_video.mp4",
     )
