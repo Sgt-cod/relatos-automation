@@ -266,8 +266,78 @@ def wait_for_approval(
         f"⏰ Tempo esgotado aguardando aprovação (ID: `{video_id}`). "
         f"Publicação cancelada — nenhum vídeo foi ao ar."
     )
-    return {
-        "decision": "approved",
-        "video_path": state["video_override"] or avatar_video_path,
-        "thumbnail_path": state["thumb_override"] or thumbnail_path,
+    return {"decision": "timeout"}
+
+
+# ---------------------------------------------------------------------------
+# Fluxo alternativo: aprovação em bloco de VÁRIOS mini-roteiros (usado no
+# pipeline do personagem mascarado, onde não há um único "vídeo do
+# avatar" pra aprovar individualmente — são N intervenções que só fazem
+# sentido compostas juntas no vídeo final).
+# ---------------------------------------------------------------------------
+
+def send_scripts_for_approval(
+    bot: TelegramApproval,
+    video_id: str,
+    interventions: list,
+    thumbnail_path: str,
+) -> None:
+    bot.send_photo(thumbnail_path, f"🖼️ *Thumbnail* (ID: `{video_id}`)")
+
+    scripts_text = "\n\n".join(
+        f"*{i + 1}. {it['topic']}*\n{it['script_text']}"
+        for i, it in enumerate(interventions)
+    )
+    caption = (
+        f"🎭 *{len(interventions)} intervenções planejadas* (ID: `{video_id}`)\n\n"
+        f"{scripts_text}"
+    )
+    markup = {
+        "inline_keyboard": [[
+            {"text": "✅ Aprovar tudo", "callback_data": f"approve_all:{video_id}"},
+            {"text": "❌ Cancelar", "callback_data": f"cancel:{video_id}"},
+        ]]
     }
+    bot.send_message(caption, reply_markup=markup)
+
+
+def wait_for_scripts_approval(bot: TelegramApproval, video_id: str, timeout: int = 3600) -> dict:
+    """
+    Loop bloqueante até timeout segundos. Diferente de wait_for_approval
+    (que trata vídeo/thumbnail separadamente com opção de substituto),
+    aqui a decisão é única: aprova tudo ou cancela — os mini-roteiros só
+    fazem sentido como conjunto, já que formam um vídeo só depois de
+    compostos.
+    Retorna {"decision": "approved" | "cancelled" | "timeout"}.
+    """
+    start = time.time()
+    print(f"⏳ Aguardando aprovação dos roteiros no Telegram (timeout: {timeout // 60} min)...")
+
+    while time.time() - start < timeout:
+        for update in bot.get_updates():
+            callback = update.get("callback_query")
+            if not callback:
+                continue
+            data = callback.get("data", "")
+            if ":" not in data:
+                continue
+            action, cb_video_id = data.split(":", 1)
+            if cb_video_id != video_id:
+                continue
+
+            if action == "approve_all":
+                bot.answer_callback(callback["id"], "Aprovado! Gerando vídeo final...")
+                return {"decision": "approved"}
+
+            if action == "cancel":
+                bot.answer_callback(callback["id"], "Cancelado.")
+                bot.send_message(f"🚫 Publicação cancelada (ID: `{video_id}`).")
+                return {"decision": "cancelled"}
+
+        time.sleep(4)
+
+    bot.send_message(
+        f"⏰ Tempo esgotado aguardando aprovação (ID: `{video_id}`). "
+        f"Publicação cancelada — nenhum vídeo foi ao ar."
+    )
+    return {"decision": "timeout"}
