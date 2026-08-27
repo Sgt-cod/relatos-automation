@@ -83,11 +83,14 @@ def main():
     with open("source_meta.json") as f:
         source_meta = json.load(f)
 
-    tense_moment = source_meta["tense_moment"]
+    highlight_window = source_meta["highlight_window"]
     transcript_excerpt = get_transcript_excerpt(
         "transcript.json",
-        start_sec=tense_moment["question_start_sec"],
-        end_sec=tense_moment["tense_end_sec"],
+        start_sec=highlight_window["start_sec"],
+        end_sec=min(highlight_window["start_sec"] + 90, highlight_window["end_sec"]),
+        # Pega só os primeiros ~90s da janela de destaque como contexto —
+        # o suficiente pra escrever a chamada de abertura, sem precisar
+        # da janela inteira (que agora é mais longa, ~12min).
     )
 
     script_text = generate_script(source_meta, transcript_excerpt)
