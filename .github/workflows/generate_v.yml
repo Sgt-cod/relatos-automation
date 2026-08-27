@@ -1,0 +1,75 @@
+name: Gerar, aprovar e publicar (personagem mascarado)
+
+on:
+  schedule:
+    # Horário diferente do generate.yml original, para os dois não
+    # competirem por minutos do GitHub Actions ao mesmo tempo, caso você
+    # queira manter as duas pipelines ativas.
+    - cron: "0 15 * * *"
+  workflow_dispatch:
+    inputs:
+      approval_timeout_min:
+        description: "Minutos de espera pela aprovação no Telegram antes de cancelar"
+        required: false
+        default: "60"
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 100
+    steps:
+      - name: Checkout do repositório
+        uses: actions/checkout@v4
+
+      - name: Configurar Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependências
+        run: pip install -r requirements.txt
+
+      - name: Instalar ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+
+      - name: Instalar Deno (necessário para o yt-dlp resolver desafios de JS do YouTube)
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Garantir yt-dlp na versão mais recente
+        run: pip install --upgrade yt-dlp
+
+      - name: 1. Buscar e baixar vídeo político
+        env:
+          YOUTUBE_API_KEY: ${{ secrets.YOUTUBE_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
+        run: |
+          if [ -n "$YOUTUBE_COOKIES" ]; then
+            echo "$YOUTUBE_COOKIES" > cookies.txt
+          fi
+          python find_and_download.py
+
+      - name: 2. Escolher momentos de intervenção e escrever mini-roteiros
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python find_intervention_moments.py
+
+      - name: 3. Gerar thumbnail
+        env:
+          AGNES_API_KEY: ${{ secrets.AGNES_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: python generate_thumbnail.py
+
+      - name: 4. Aprovar roteiros no Telegram, compor vídeo final e publicar
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          FISH_AUDIO_API_KEY: ${{ secrets.FISH_AUDIO_API_KEY }}
+          FISH_AUDIO_VOICE_ID: ${{ secrets.FISH_AUDIO_VOICE_ID }}
+          YOUTUBE_CLIENT_ID: ${{ secrets.YOUTUBE_CLIENT_ID }}
+          YOUTUBE_CLIENT_SECRET: ${{ secrets.YOUTUBE_CLIENT_SECRET }}
+          YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
+          APPROVAL_TIMEOUT_MIN: ${{ github.event.inputs.approval_timeout_min || '60' }}
+        run: python approve_and_publish_v.py
