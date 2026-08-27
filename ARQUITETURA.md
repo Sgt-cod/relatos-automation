@@ -146,16 +146,18 @@ reaproveitando a maior parte dos módulos, mas com um fluxo diferente:
 2. Gemini identifica a JANELA de destaque (~12 min) com o conteúdo mais denso
         │
         ▼
-3. Dentro dessa janela, Gemini escolhe N_INTERVENTIONS (padrão: 4) momentos
-   espaçados e escreve um mini-roteiro para cada, na persona do personagem
-   mascarado (irônico, anti-sistema, crítico de esquerda e direita igualmente)
+3. Gemini escreve TRÊS partes do roteiro:
+   - Abertura (tela cheia): cumprimento + contexto do que vem a seguir
+   - N_MID_INTERVENTIONS (padrão: 3) momentos críticos espaçados dentro da
+     janela, cada um com seu mini-roteiro irônico/debochado
+   - Despedida (tela cheia): fechamento mantendo o tom cético/anti-sistema
         │
         ▼
 4. Gera a thumbnail (mesmo mecanismo de antes)
         │
         ▼
-5. Telegram: envia TODOS os mini-roteiros + thumbnail, aprovação em bloco
-   (tudo ou nada — os roteiros só fazem sentido como conjunto)  ◄── CHECKPOINT
+5. Telegram: envia TODOS os mini-roteiros (abertura + críticas + despedida)
+   + thumbnail, aprovação em bloco (tudo ou nada)  ◄── CHECKPOINT
         │
         ├── Cancelado ou timeout → encerra, nada é gerado além do texto
         │
@@ -163,13 +165,15 @@ reaproveitando a maior parte dos módulos, mas com um fluxo diferente:
                 │
                 ▼
         6. SÓ AGORA gera áudio (Fish Audio) e clipe do personagem (vídeo
-           local + áudio) para cada intervenção — deferido até depois da
-           aprovação, pra não gastar API à toa em roteiros rejeitados
+           local + áudio) para cada parte — deferido até depois da
+           aprovação. Cada clipe sorteia um vídeo-base entre os
+           disponíveis em assets/presenter*.mp4, pra variar visualmente
                 │
                 ▼
-        7. Compõe o vídeo final: trecho de destaque intercalado com as
-           intervenções (o vídeo de base CONGELA num frame parado durante
-           cada intervenção, com o personagem em PiP por cima) + moldura
+        7. Compõe o vídeo final: ABERTURA em tela cheia -> trecho de
+           destaque intercalado com as intervenções críticas (o vídeo de
+           base CONGELA num frame parado durante cada uma, com o
+           personagem em PiP por cima) -> DESPEDIDA em tela cheia -> moldura
                 │
                 ▼
         8. Publica no YouTube
