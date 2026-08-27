@@ -68,9 +68,24 @@ def apply_frame_overlay(
     return output_path
 
 
+def get_video_resolution(path: str) -> tuple:
+    """Retorna (largura, altura) do vídeo, via ffprobe."""
+    cmd = [
+        "ffprobe", "-v", "quiet",
+        "-print_format", "json",
+        "-show_streams", "-select_streams", "v:0",
+        path,
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+    stream = json.loads(result.stdout)["streams"][0]
+    return int(stream["width"]), int(stream["height"])
+
+
 def compose_video_with_interventions(
     highlight_path: str,
-    interventions_with_clips: list,
+    opening_clip_path: str,
+    mid_interventions_with_clips: list,
+    closing_clip_path: str,
     output_path: str,
     clip_start_sec: float,
     pip_scale: float = 1 / 6,
@@ -78,21 +93,20 @@ def compose_video_with_interventions(
     moldura_path: str = "assets/moldura.png",
 ) -> str:
     """
-    Monta o vídeo final intercalando o trecho de destaque com N
-    intervenções do personagem: base -> intervenção -> base ->
-    intervenção -> ... -> base final.
-
-    Em cada intervenção, o vídeo de base CONGELA num frame parado (não
-    fica mudo tocando por baixo — a ideia aqui é uma "pausa" pra comentário,
-    diferente do desenho anterior de PiP sobre vídeo rodando) e o
-    personagem aparece em PiP por cima, falando o áudio daquele trecho.
+    Monta o vídeo final: abertura em TELA CHEIA -> trecho de destaque
+    intercalado com as intervenções críticas (PiP sobre frame congelado)
+    -> despedida em TELA CHEIA -> moldura por cima de tudo.
 
     Args:
         highlight_path: vídeo de destaque já cortado (highlight_cut.mp4).
-        interventions_with_clips: lista de dicts
+        opening_clip_path: clipe do personagem se apresentando/cumprimentando
+            (vai em tela cheia, ANTES de tudo).
+        mid_interventions_with_clips: lista de dicts
             {"timestamp_sec": float (relativo ao VÍDEO ORIGINAL),
-             "clip_path": str (caminho do intervention_clip_N.mp4)},
-            em qualquer ordem — a função ordena por timestamp internamente.
+             "clip_path": str} — as intervenções críticas no meio do vídeo,
+            em PiP sobre o vídeo de base congelado.
+        closing_clip_path: clipe do personagem se despedindo (vai em tela
+            cheia, DEPOIS de tudo).
         clip_start_sec: o quanto o highlight_path foi cortado a partir do
             vídeo original (source_meta["clip_start_sec"]) — usado pra
             converter os timestamps das intervenções pra tempo relativo
@@ -100,19 +114,44 @@ def compose_video_with_interventions(
     """
     AUDIO_PARAMS = ["-ar", "48000", "-ac", "2", "-c:a", "aac", "-b:a", "192k"]
 
+    target_w, target_h = get_video_resolution(highlight_path)
+
+    def make_fullscreen_segment(clip_path: str, out_path: str) -> None:
+        """Redimensiona o clipe do personagem pra ocupar a tela toda,
+        mantendo a proporção original (letterbox se necessário) e
+        casando com a resolução do vídeo de destaque."""
+        subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-i", clip_path,
+                "-vf",
+                f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
+                f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,setsar=1",
+                "-c:v", "libx264",
+                *AUDIO_PARAMS,
+                out_path,
+            ],
+            check=True,
+        )
+
     highlight_duration = get_video_duration(highlight_path)
 
     # Converte timestamps para o tempo relativo ao highlight_path, e
     # ordena cronologicamente (defensivo — já deveria vir ordenado).
-    items = sorted(interventions_with_clips, key=lambda x: x["timestamp_sec"])
+    items = sorted(mid_interventions_with_clips, key=lambda x: x["timestamp_sec"])
     rel_points = [
         max(0.0, min(highlight_duration, it["timestamp_sec"] - clip_start_sec))
         for it in items
     ]
 
     segment_files = []
-    cursor = 0.0
 
+    # --- Abertura em tela cheia ---
+    opening_seg_path = "opening_seg.mp4"
+    make_fullscreen_segment(opening_clip_path, opening_seg_path)
+    segment_files.append(opening_seg_path)
+
+    cursor = 0.0
     for i, (item, rel_ts) in enumerate(zip(items, rel_points)):
         # --- Segmento de base ANTES desta intervenção ---
         base_duration = max(0.0, rel_ts - cursor)
@@ -147,18 +186,40 @@ def compose_video_with_interventions(
         )
 
         clip_duration = get_video_duration(item["clip_path"])
+
+        # Materializa o frame congelado como um vídeo de verdade, na
+        # duração exata do clipe do personagem — em vez de combinar
+        # "-loop 1" direto com overlay+mapeamento de áudio no mesmo
+        # comando (combinação que já se mostrou instável e produziu
+        # personagem "estático" numa tentativa anterior). Fazer em duas
+        # etapas reaproveita o mesmo padrão de overlay já testado e
+        # confirmado funcionando (o mesmo usado em compose_final_video).
+        freeze_video_path = f"freeze_video_{i}.mp4"
+        subprocess.run(
+            [
+                "ffmpeg", "-y",
+                "-loop", "1",
+                "-i", frame_path,
+                "-t", str(clip_duration),
+                "-r", "25",
+                "-pix_fmt", "yuv420p",
+                "-c:v", "libx264",
+                freeze_video_path,
+            ],
+            check=True,
+        )
+
         intervention_seg_path = f"intervention_seg_{i}.mp4"
         subprocess.run(
             [
                 "ffmpeg", "-y",
-                "-loop", "1", "-i", frame_path,       # [0] frame congelado, em loop
-                "-i", item["clip_path"],               # [1] clipe do personagem (vídeo + áudio)
+                "-i", freeze_video_path,   # [0] frame congelado (vídeo de verdade, não filtro em loop)
+                "-i", item["clip_path"],    # [1] clipe do personagem (vídeo + áudio)
                 "-filter_complex",
                 f"[1:v]scale=iw*{pip_scale}:ih*{pip_scale}[pip];"
                 f"[0:v][pip]overlay=x={pip_margin}:y={pip_margin}[vout]",
                 "-map", "[vout]",
                 "-map", "1:a",
-                "-t", str(clip_duration),
                 "-c:v", "libx264",
                 *AUDIO_PARAMS,
                 intervention_seg_path,
@@ -185,6 +246,11 @@ def compose_video_with_interventions(
             check=True,
         )
         segment_files.append(final_seg_path)
+
+    # --- Despedida em tela cheia ---
+    closing_seg_path = "closing_seg.mp4"
+    make_fullscreen_segment(closing_clip_path, closing_seg_path)
+    segment_files.append(closing_seg_path)
 
     # --- Concatena todos os segmentos, na ordem ---
     with open("concat_list.txt", "w") as f:
