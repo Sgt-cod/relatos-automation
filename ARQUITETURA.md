@@ -130,6 +130,103 @@ approve_compose_publish.py     # junta aprovação + composição + publicação
 publish_youtube.py             # upload final no YouTube
 ```
 
+---
+
+# Variante: personagem mascarado com múltiplas intervenções
+
+Pipeline separada (workflow próprio: `generate_v.yml`, disparado em
+horário diferente do original pra não competir por minutos do Actions),
+reaproveitando a maior parte dos módulos, mas com um fluxo diferente:
+
+```
+1. Buscar e baixar vídeo POLÍTICO EM GERAL (não só entrevistas — discursos,
+   debates, coletivas, sessões etc., nos canais configurados)
+        │
+        ▼
+2. Gemini identifica a JANELA de destaque (~12 min) com o conteúdo mais denso
+        │
+        ▼
+3. Dentro dessa janela, Gemini escolhe N_INTERVENTIONS (padrão: 4) momentos
+   espaçados e escreve um mini-roteiro para cada, na persona do personagem
+   mascarado (irônico, anti-sistema, crítico de esquerda e direita igualmente)
+        │
+        ▼
+4. Gera a thumbnail (mesmo mecanismo de antes)
+        │
+        ▼
+5. Telegram: envia TODOS os mini-roteiros + thumbnail, aprovação em bloco
+   (tudo ou nada — os roteiros só fazem sentido como conjunto)  ◄── CHECKPOINT
+        │
+        ├── Cancelado ou timeout → encerra, nada é gerado além do texto
+        │
+        └── Aprovado
+                │
+                ▼
+        6. SÓ AGORA gera áudio (Fish Audio) e clipe do personagem (vídeo
+           local + áudio) para cada intervenção — deferido até depois da
+           aprovação, pra não gastar API à toa em roteiros rejeitados
+                │
+                ▼
+        7. Compõe o vídeo final: trecho de destaque intercalado com as
+           intervenções (o vídeo de base CONGELA num frame parado durante
+           cada intervenção, com o personagem em PiP por cima) + moldura
+                │
+                ▼
+        8. Publica no YouTube
+```
+
+## Arquivos específicos desta variante
+
+```
+.github/workflows/
+  generate_v.yml                    # workflow separado desta variante
+find_intervention_moments.py        # escolhe os N momentos + escreve os mini-roteiros
+generate_intervention_audios.py     # TTS de cada intervenção (roda só após aprovação)
+generate_intervention_clips.py      # clipe do personagem por intervenção
+approve_and_publish_v.py            # orquestração: aprovação em bloco → geração → composição → publicação
+```
+
+Reaproveitados do pipeline original sem alteração de interface:
+`find_and_download.py` (generalizado — ver abaixo), `create_presenter_clip.py`,
+`generate_thumbnail.py` (adaptado pra usar `interventions.json`),
+`compose_video.py` (nova função `compose_video_with_interventions`,
+mantendo `compose_final_video` original intacta), `telegram_approval.py`
+(novas funções `send_scripts_for_approval`/`wait_for_scripts_approval`,
+mantendo as originais intactas), `publish_youtube.py`, `gemini_client.py`.
+
+## O que mudou em `find_and_download.py` para esta variante
+
+- `SEARCH_KEYWORDS` ampliado de `["entrevista"]` para cobrir discursos,
+  debates, coletivas, pronunciamentos, sessões legislativas etc.
+- `find_tense_moment()` (um único ponto de tensão) virou
+  `find_highlight_window()` (uma janela contígua mais longa, ~12 min, com
+  o conteúdo político mais denso do vídeo como um todo — não precisa ser
+  um confronto único).
+- Esse arquivo é **compartilhado pelas duas pipelines** (a original e
+  esta variante) — se você só quiser usar uma delas, ainda funciona, já
+  que `generate.yml` (original) não usa mais `find_tense_moment`
+  (também foi migrado pra `find_highlight_window` na correção anterior).
+
+## Recomendações de transparência (vale ler antes de publicar)
+
+1. **Divulgação do personagem ser gerado por IA**: recomendo colocar
+   isso na bio/descrição do canal — algo como "personagem de sátira
+   política gerado por IA, sem afiliação com nenhum partido ou grupo".
+   Isso preserva o efeito criativo sem o público confundir com uma
+   pessoa real por trás da máscara.
+2. **Máscara**: se o vídeo em `assets/presenter.mp4` usa o design exato
+   do figurino do filme "V de Vingança", vale considerar um design
+   próprio (o conceito de máscara anônima é livre, mas o design
+   específico do filme é propriedade da Warner Bros).
+3. Os mini-roteiros têm as mesmas salvaguardas anti-alucinação de antes
+   (só usar o que está na transcrição, não fabricar falas), reforçadas
+   com regras específicas contra difamação e ataques pessoais — mas a
+   revisão humana no Telegram continua sendo a salvaguarda principal,
+   ainda mais aqui, com várias piadas pontuais sobre pessoas reais por
+   vídeo em vez de uma única linha neutra.
+
+---
+
 ## Pontas soltas para você decidir
 
 1. **`CHANNELS` em `pipeline_config.py`**: preencha os Channel IDs reais
