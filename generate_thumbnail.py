@@ -249,10 +249,11 @@ if __name__ == "__main__":
         with open("interventions.json") as f:
             interventions = json.load(f)
 
-        # Escolhe uma das intervenções pra estampar na thumbnail (a mais
-        # "central" da lista costuma ser um bom equilíbrio entre já ter
-        # contexto acumulado e ainda não ser o fecho do vídeo).
-        featured = interventions[len(interventions) // 2]
+        mid = interventions["mid"]
+        # Escolhe uma das intervenções críticas pra estampar na thumbnail
+        # (a mais "central" da lista costuma ser um bom equilíbrio entre
+        # já ter contexto acumulado e ainda não ser o fecho do vídeo).
+        featured = mid[len(mid) // 2]
         timestamp_sec = featured["timestamp_sec"]
         hook_source_text = featured["script_text"]
     else:
