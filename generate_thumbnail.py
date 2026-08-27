@@ -238,26 +238,38 @@ if __name__ == "__main__":
 
     with open("source_meta.json") as f:
         source_meta = json.load(f)
-    with open("transcript.json") as f:
-        transcript = json.load(f)
 
-    tense_moment = source_meta["tense_moment"]
     clip_start_sec = source_meta["clip_start_sec"]
 
-    # Timestamp do frame RELATIVO ao clipe já cortado (interview_cut.mp4),
-    # não ao vídeo original — usa o fim da resposta tensa, que costuma ser
-    # o pico visual do embate.
-    frame_timestamp_in_clip = max(0.0, tense_moment["tense_end_sec"] - clip_start_sec)
+    # Dois pipelines diferentes chamam este script:
+    # - variante do personagem mascarado: gera interventions.json (N mini-roteiros)
+    # - pipeline original: gera script.txt (um único roteiro de abertura)
+    # Detecta qual dos dois existe e adapta o "gancho" da thumbnail a partir daí.
+    if os.path.exists("interventions.json"):
+        with open("interventions.json") as f:
+            interventions = json.load(f)
 
-    transcript_excerpt = "\n".join(
-        seg["text"] for seg in transcript
-        if tense_moment["question_start_sec"] - 15 <= seg["start"] <= tense_moment["tense_end_sec"] + 15
-    )
+        # Escolhe uma das intervenções pra estampar na thumbnail (a mais
+        # "central" da lista costuma ser um bom equilíbrio entre já ter
+        # contexto acumulado e ainda não ser o fecho do vídeo).
+        featured = interventions[len(interventions) // 2]
+        timestamp_sec = featured["timestamp_sec"]
+        hook_source_text = featured["script_text"]
+    else:
+        with open("script.txt") as f:
+            hook_source_text = f.read().strip()
+        # Sem uma lista de momentos específicos, usa o início da janela
+        # de destaque como ponto de referência pro frame da thumbnail.
+        timestamp_sec = source_meta["highlight_window"]["start_sec"]
+
+    # Timestamp do frame RELATIVO ao clipe já cortado (highlight_cut.mp4),
+    # não ao vídeo original.
+    frame_timestamp_in_clip = max(0.0, timestamp_sec - clip_start_sec)
 
     portrait = generate_agnes_portrait(api_key, "portrait.jpg")
-    frame = extract_frame("interview_cut.mp4", timestamp_sec=frame_timestamp_in_clip, out_path="frame.jpg")
+    frame = extract_frame("highlight_cut.mp4", timestamp_sec=frame_timestamp_in_clip, out_path="frame.jpg")
 
-    hook_text = generate_hook_text(source_meta, transcript_excerpt)
+    hook_text = generate_hook_text(source_meta, hook_source_text)
 
     compose_thumbnail(
         portrait_path=portrait,
