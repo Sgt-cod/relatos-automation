@@ -279,18 +279,20 @@ def wait_for_approval(
 def send_scripts_for_approval(
     bot: TelegramApproval,
     video_id: str,
-    interventions: list,
+    interventions: dict,
     thumbnail_path: str,
 ) -> None:
     bot.send_photo(thumbnail_path, f"🖼️ *Thumbnail* (ID: `{video_id}`)")
 
-    scripts_text = "\n\n".join(
+    mid_text = "\n\n".join(
         f"*{i + 1}. {it['topic']}*\n{it['script_text']}"
-        for i, it in enumerate(interventions)
+        for i, it in enumerate(interventions["mid"])
     )
     caption = (
-        f"🎭 *{len(interventions)} intervenções planejadas* (ID: `{video_id}`)\n\n"
-        f"{scripts_text}"
+        f"🎭 *Roteiro completo* (ID: `{video_id}`)\n\n"
+        f"*Abertura:*\n{interventions['opening']['script_text']}\n\n"
+        f"*Intervenções críticas:*\n{mid_text}\n\n"
+        f"*Despedida:*\n{interventions['closing']['script_text']}"
     )
     markup = {
         "inline_keyboard": [[
