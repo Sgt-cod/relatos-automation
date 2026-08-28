@@ -238,11 +238,16 @@ mantendo as originais intactas), `publish_youtube.py`, `gemini_client.py`.
 2. **Voz do Fish Audio** (`FISH_AUDIO_VOICE_ID`).
 3. **Fontes da thumbnail**: coloque `Bangers-Regular.ttf` e/ou
    `RoadRage-Regular.ttf` em `assets/fonts/`.
-4. **Seta da thumbnail**: coloque uma imagem PNG com fundo transparente,
-   apontando para a direita, em `assets/arrow_right.png`.
+4. **Imagens da thumbnail**: coloque uma ou mais imagens 16:9
+   (`.jpg`/`.jpeg`/`.png`) em `assets/thumb/` — uma é escolhida
+   aleatoriamente a cada vídeo, e a faixa de texto (gancho gerado pelo
+   Gemini) é desenhada por cima, na base. Não usa mais Agnes AI nem
+   frame extraído do vídeo.
 5. **Avatar**: imagem em `assets/avatar.png` (usada só se rodar com Modal)
-   e vídeo em `assets/presenter.mp4` (usado por padrão — o apresentador
-   gesticulando, com nariz e boca mascarados).
+   e vídeo(s) em `assets/presenter*.mp4` (usado por padrão — o(s)
+   apresentador(es) gesticulando, com nariz e boca mascarados; pode ter
+   vários numerados: `presenter1.mp4`, `presenter2.mp4`, etc., escolhidos
+   aleatoriamente por intervenção).
 6. **Autorização OAuth2 do YouTube** (veja `GUIA_APIS.md`, seção 4).
 7. **`YOUTUBE_COOKIES`** (veja `GUIA_APIS.md`, seção 6) — necessário para o
    `yt-dlp` não ser bloqueado pelo YouTube.
