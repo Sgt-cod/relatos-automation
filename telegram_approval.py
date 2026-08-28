@@ -61,12 +61,61 @@ class TelegramApproval:
 
     # -- Envio -------------------------------------------------------------
 
+    @staticmethod
+    def _post_with_retry(
+        url: str,
+        max_retries: int = 3,
+        initial_backoff_sec: float = 5,
+        reopen_file: tuple | None = None,
+        **request_kwargs,
+    ):
+        """
+        POST com retry/backoff para erros transitórios de rede (timeout,
+        conexão interrompida) — uploads de vídeo/foto pro Telegram às
+        vezes esbarram em instabilidade momentânea do runner do GitHub
+        Actions ou da própria API do Telegram.
+
+        reopen_file: (caminho, nome_do_campo) — se fornecido, reabre o
+        arquivo do zero a cada nova tentativa (um handle de arquivo já
+        enviado numa tentativa falha não pode ser reaproveitado).
+        """
+        import time
+
+        last_error = None
+        for attempt in range(1, max_retries + 1):
+            if reopen_file and attempt > 1:
+                path, field_name = reopen_file
+                request_kwargs["files"] = {field_name: open(path, "rb")}
+
+            try:
+                resp = requests.post(url, **request_kwargs)
+                resp.raise_for_status()
+                return resp
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                last_error = e
+                if attempt == max_retries:
+                    raise
+                wait = initial_backoff_sec * (2 ** (attempt - 1))
+                print(f"[telegram] Tentativa {attempt}/{max_retries} falhou ({e}). "
+                      f"Tentando de novo em {wait}s...")
+                time.sleep(wait)
+            finally:
+                files = request_kwargs.get("files")
+                if files:
+                    for f in files.values():
+                        try:
+                            f.close()
+                        except Exception:
+                            pass
+
+        raise last_error  # pragma: no cover — inalcançável na prática
+
     def send_message(self, text: str, reply_markup: dict | None = None) -> None:
         payload = {"chat_id": self.chat_id, "text": text, "parse_mode": "Markdown"}
         if reply_markup:
             payload["reply_markup"] = json.dumps(reply_markup)
         try:
-            requests.post(f"{self.base_url}/sendMessage", json=payload, timeout=15)
+            self._post_with_retry(f"{self.base_url}/sendMessage", json=payload, timeout=20)
         except Exception as e:
             print(f"[telegram] Falha ao enviar mensagem: {e}")
 
@@ -74,21 +123,25 @@ class TelegramApproval:
         data = {"chat_id": self.chat_id, "caption": caption, "parse_mode": "Markdown"}
         if reply_markup:
             data["reply_markup"] = json.dumps(reply_markup)
-        with open(path, "rb") as f:
-            resp = requests.post(
-                f"{self.base_url}/sendVideo", data=data, files={"video": f}, timeout=120
-            )
-        resp.raise_for_status()
+        self._post_with_retry(
+            f"{self.base_url}/sendVideo",
+            data=data,
+            files={"video": open(path, "rb")},
+            timeout=180,  # vídeos podem demorar mais pra subir; margem maior
+            reopen_file=(path, "video"),
+        )
 
     def send_photo(self, path: str, caption: str, reply_markup: dict | None = None) -> None:
         data = {"chat_id": self.chat_id, "caption": caption, "parse_mode": "Markdown"}
         if reply_markup:
             data["reply_markup"] = json.dumps(reply_markup)
-        with open(path, "rb") as f:
-            resp = requests.post(
-                f"{self.base_url}/sendPhoto", data=data, files={"photo": f}, timeout=60
-            )
-        resp.raise_for_status()
+        self._post_with_retry(
+            f"{self.base_url}/sendPhoto",
+            data=data,
+            files={"photo": open(path, "rb")},
+            timeout=90,
+            reopen_file=(path, "photo"),
+        )
 
     def answer_callback(self, callback_id: str, text: str) -> None:
         try:
