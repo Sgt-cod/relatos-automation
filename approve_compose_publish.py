@@ -61,7 +61,7 @@ def main():
 
     print("✅ Aprovado! Compondo vídeo final...")
     compose_final_video(
-        interview_path="interview_cut.mp4",
+        interview_path="highlight_cut.mp4",
         avatar_path=result["video_path"],
         output_path="final_video.mp4",
     )
