@@ -80,7 +80,17 @@ def _search_channel(channel_id: str, keyword: str, published_after: str) -> list
     }
     resp = requests.get(YOUTUBE_SEARCH_URL, params=params, timeout=30)
     resp.raise_for_status()
-    return resp.json().get("items", [])
+    items = resp.json().get("items", [])
+
+    # Filtra transmissões AO VIVO ou AGENDADAS — a busca ampliada (discursos,
+    # sessões, coletivas etc.) traz bem mais lives do que a busca original
+    # só por "entrevista". Baixar uma live em andamento não faz sentido
+    # (duração indefinida), e o YouTube reporta a duração dela de um jeito
+    # ("P0D") que nem é uma duração normal — melhor já descartar aqui.
+    return [
+        item for item in items
+        if item["snippet"].get("liveBroadcastContent", "none") == "none"
+    ]
 
 
 def _get_video_duration_sec(video_id: str) -> int:
@@ -100,6 +110,12 @@ def _get_video_duration_sec(video_id: str) -> int:
 def _parse_iso8601_duration(iso_duration: str) -> int:
     import re
     match = re.match(r"PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", iso_duration)
+    if not match or not any(match.groups()):
+        # Formatos fora do padrão "PTxxHxxMxxS" (ex.: "P0D", usado pelo
+        # YouTube pra transmissões ao vivo/agendadas) não são uma duração
+        # de verdade — trata como 0, que o filtro de duração mínima já
+        # descarta naturalmente, em vez de derrubar o script inteiro.
+        return 0
     h, m, s = (int(g) if g else 0 for g in match.groups())
     return h * 3600 + m * 60 + s
 
