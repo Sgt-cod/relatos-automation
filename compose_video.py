@@ -172,52 +172,28 @@ def compose_video_with_interventions(
             segment_files.append(base_seg_path)
 
         # --- Segmento de intervenção: frame congelado + PiP do personagem ---
-        frame_path = f"freeze_frame_{i}.jpg"
-        subprocess.run(
-            [
-                "ffmpeg", "-y",
-                "-ss", str(rel_ts),
-                "-i", highlight_path,
-                "-frames:v", "1",
-                "-q:v", "2",
-                frame_path,
-            ],
-            check=True,
-        )
-
+        # Usa o filtro "tpad" (stop_mode=clone) para congelar o vídeo
+        # nesse instante — técnica nativa do ffmpeg pra "freeze frame",
+        # feita inteiramente dentro do grafo de filtros. É mais robusta
+        # que o método anterior (extrair um JPEG e recriar um vídeo em
+        # loop a partir dele), que produziu o personagem "estático" numa
+        # tentativa anterior — provavelmente por um descompasso de
+        # timestamps entre o vídeo congelado (via imagem) e o overlay.
         clip_duration = get_video_duration(item["clip_path"])
-
-        # Materializa o frame congelado como um vídeo de verdade, na
-        # duração exata do clipe do personagem — em vez de combinar
-        # "-loop 1" direto com overlay+mapeamento de áudio no mesmo
-        # comando (combinação que já se mostrou instável e produziu
-        # personagem "estático" numa tentativa anterior). Fazer em duas
-        # etapas reaproveita o mesmo padrão de overlay já testado e
-        # confirmado funcionando (o mesmo usado em compose_final_video).
-        freeze_video_path = f"freeze_video_{i}.mp4"
-        subprocess.run(
-            [
-                "ffmpeg", "-y",
-                "-loop", "1",
-                "-i", frame_path,
-                "-t", str(clip_duration),
-                "-r", "25",
-                "-pix_fmt", "yuv420p",
-                "-c:v", "libx264",
-                freeze_video_path,
-            ],
-            check=True,
-        )
-
         intervention_seg_path = f"intervention_seg_{i}.mp4"
         subprocess.run(
             [
                 "ffmpeg", "-y",
-                "-i", freeze_video_path,   # [0] frame congelado (vídeo de verdade, não filtro em loop)
+                "-i", highlight_path,      # [0] vídeo de destaque original
                 "-i", item["clip_path"],    # [1] clipe do personagem (vídeo + áudio)
                 "-filter_complex",
+                # Pega uma fatia mínima (1 frame) do vídeo de destaque no
+                # instante da intervenção, e "clona" esse frame por
+                # clip_duration segundos usando tpad — isso é o "congelar".
+                f"[0:v]trim=start={rel_ts}:end={rel_ts + 0.04},setpts=PTS-STARTPTS,"
+                f"tpad=stop_mode=clone:stop_duration={clip_duration}[frozen];"
                 f"[1:v]scale=iw*{pip_scale}:ih*{pip_scale}[pip];"
-                f"[0:v][pip]overlay=x={pip_margin}:y={pip_margin}[vout]",
+                f"[frozen][pip]overlay=x={pip_margin}:y={pip_margin}:shortest=1[vout]",
                 "-map", "[vout]",
                 "-map", "1:a",
                 "-c:v", "libx264",
