@@ -29,6 +29,8 @@ import random
 import json
 import glob
 
+from pipeline_config import TARGET_FPS
+
 
 def get_media_duration(path: str) -> float:
     """Duração em segundos de um arquivo de vídeo ou áudio, via ffprobe."""
@@ -78,6 +80,8 @@ def create_presenter_clip(
             "-map", "0:v:0",
             "-map", "1:a:0",
             "-t", str(audio_duration),
+            "-r", str(TARGET_FPS),   # fps fixo — evita descompasso na concatenação final
+            "-pix_fmt", "yuv420p",
             "-c:v", "libx264",
             "-c:a", "aac",
             output_path,
@@ -93,6 +97,8 @@ def create_presenter_clip(
             "-map", "0:v:0",
             "-map", "1:a:0",
             "-t", str(audio_duration),
+            "-r", str(TARGET_FPS),   # fps fixo — evita descompasso na concatenação final
+            "-pix_fmt", "yuv420p",
             "-c:v", "libx264",
             "-c:a", "aac",
             output_path,
