@@ -16,15 +16,9 @@ find_intervention_moments.py e outros módulos.
 CHANNELS = {
     "CNN Brasil": "UCvdwhh_fDyWccR42-rReZLw",
     "G1": "UCaGmdJSSiR7fkh2A-c6emsA",
-    "Fala Glauber": "UC3BM4LVGTrG5OER815AM7Bg",  # pegue pelo navegador — ver GUIA_APIS.md
-    "Flow Podcast": "UC4ncvgh5hFr5O83MH7-jRJg",  # pegue pelo navegador — ver GUIA_APIS.md
-    "Irmãos Dias Podcast": "UChBtPExX9RjCdmpAizK7ccQ",  
-    "Joel Jota": "UCkzDpSF1zTOnOKbkWT8Xwog",
-    "Iron Talks": "UCskT0JUTjD76o2F73epbLYw",
-    "Rotina Trezoitão": "UCC-r6vnXtcwBYq0VxZYhoXg",
-    "PodPah": "UCj9R9rOhl81fhnKxBpwJ-yw",
-    "Podcast 3 irmãos": "UC6iiSl-DJQF5t_YttyUZX6Q",
-    "RedCast": "UCeL1a4rpEA8UG9IQIewPccg",
+    "Estadão": "CHANNEL_ID_AQUI",  # pegue pelo navegador — ver GUIA_APIS.md
+    "Folha de S.Paulo": "CHANNEL_ID_AQUI",  # pegue pelo navegador — ver GUIA_APIS.md
+    "Metrópoles": "CHANNEL_ID_AQUI",  # pegue pelo navegador — ver GUIA_APIS.md
 }
 
 # Ampliado de só "entrevista" para cobrir conteúdo político em geral —

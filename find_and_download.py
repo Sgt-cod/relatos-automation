@@ -120,6 +120,60 @@ def _parse_iso8601_duration(iso_duration: str) -> int:
     return h * 3600 + m * 60 + s
 
 
+def _extract_video_id(url_or_id: str) -> str:
+    """Extrai o video_id de uma URL do YouTube em qualquer formato comum,
+    ou devolve direto se já for um ID puro (11 caracteres)."""
+    import re
+
+    url_or_id = url_or_id.strip()
+    if re.fullmatch(r"[A-Za-z0-9_-]{11}", url_or_id):
+        return url_or_id
+
+    match = re.search(r"(?:v=|youtu\.be/|/shorts/|/embed/)([A-Za-z0-9_-]{11})", url_or_id)
+    if match:
+        return match.group(1)
+
+    raise ValueError(f"Não consegui extrair um video_id válido de: {url_or_id}")
+
+
+def find_candidate_video_from_url(url_or_id: str) -> dict:
+    """
+    Monta o "candidato" a partir de um vídeo específico indicado
+    manualmente (link ou ID), pulando a busca nos canais configurados.
+    Usada quando o workflow é disparado manualmente com SPECIFIC_VIDEO_URL.
+    """
+    video_id = _extract_video_id(url_or_id)
+
+    resp = requests.get(
+        YOUTUBE_VIDEOS_URL,
+        params={"key": YOUTUBE_API_KEY, "id": video_id, "part": "snippet,contentDetails"},
+        timeout=15,
+    )
+    resp.raise_for_status()
+    items = resp.json().get("items", [])
+    if not items:
+        raise RuntimeError(
+            f"Vídeo não encontrado (ID inválido, privado ou removido): {video_id}"
+        )
+
+    item = items[0]
+    snippet = item["snippet"]
+    duration = _parse_iso8601_duration(item["contentDetails"]["duration"])
+
+    if snippet.get("liveBroadcastContent", "none") != "none":
+        print("⚠️  Aviso: o vídeo indicado é uma transmissão ao vivo/agendada — "
+              "a duração pode não estar disponível ainda, o que pode causar "
+              "problemas nos próximos passos.")
+
+    return {
+        "video_id": video_id,
+        "channel": snippet.get("channelTitle", "Desconhecido"),
+        "title": snippet["title"],
+        "url": f"https://www.youtube.com/watch?v={video_id}",
+        "duration_sec": duration,
+    }
+
+
 def find_candidate_video() -> dict:
     """Percorre os canais configurados e devolve o primeiro candidato novo."""
     processed = _load_processed()
@@ -291,7 +345,12 @@ def cut_highlight(
 # ---------------------------------------------------------------------------
 
 def main():
-    candidate = find_candidate_video()
+    specific_video = os.environ.get("SPECIFIC_VIDEO_URL", "").strip()
+    if specific_video:
+        print(f"Vídeo específico indicado manualmente: {specific_video}")
+        candidate = find_candidate_video_from_url(specific_video)
+    else:
+        candidate = find_candidate_video()
     print(f"Candidato selecionado: {candidate['title']} ({candidate['channel']})")
 
     download_video(candidate["url"])
