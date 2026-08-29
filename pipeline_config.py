@@ -55,5 +55,15 @@ HIGHLIGHT_DURATION_SEC = 12 * 60
 # em tela cheia.
 N_MID_INTERVENTIONS = 3
 
+# Taxa de quadros (fps) fixa aplicada a TODOS os trechos de vídeo antes de
+# concatenar. Os vídeos-fonte (assets/presenter*.mp4 e o vídeo baixado do
+# YouTube) quase sempre têm fps nativos diferentes entre si — e como a
+# concatenação final usa "-c copy" (sem reencodar), um descompasso de fps
+# entre os trechos causa o vídeo tocar em câmera lenta/rápida em alguns
+# pedaços (o áudio, por ter timeline própria, toca normal — daí o
+# descompasso). Forçar todo mundo pro mesmo fps antes de concatenar evita
+# isso.
+TARGET_FPS = 30
+
 STATE_DIR = "state"
 PROCESSED_VIDEOS_FILE = f"{STATE_DIR}/processed_videos.json"
