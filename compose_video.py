@@ -92,25 +92,26 @@ def compose_video_with_interventions(
     closing_clip_path: str,
     output_path: str,
     clip_start_sec: float,
-    pip_scale: float = 1 / 6,
-    pip_margin: int = 20,
     moldura_path: str = "assets/moldura.png",
 ) -> str:
     """
-    Monta o vídeo final: abertura em TELA CHEIA -> trecho de destaque
-    intercalado com as intervenções críticas (PiP sobre frame congelado)
-    -> despedida em TELA CHEIA -> moldura por cima de tudo.
+    Monta o vídeo final: abertura -> trecho de destaque intercalado com
+    as intervenções críticas -> despedida -> moldura por cima de tudo.
+
+    TODAS as aparições do personagem (abertura, intervenções críticas,
+    despedida) vão em TELA CHEIA — sem PiP, sem congelar frame do vídeo
+    de base. O vídeo de destaque só aparece "puro" (tocando normalmente)
+    nos intervalos ENTRE as aparições do personagem.
 
     Args:
         highlight_path: vídeo de destaque já cortado (highlight_cut.mp4).
-        opening_clip_path: clipe do personagem se apresentando/cumprimentando
-            (vai em tela cheia, ANTES de tudo).
+        opening_clip_path: clipe do personagem se apresentando/cumprimentando.
         mid_interventions_with_clips: lista de dicts
             {"timestamp_sec": float (relativo ao VÍDEO ORIGINAL),
-             "clip_path": str} — as intervenções críticas no meio do vídeo,
-            em PiP sobre o vídeo de base congelado.
-        closing_clip_path: clipe do personagem se despedindo (vai em tela
-            cheia, DEPOIS de tudo).
+             "clip_path": str} — os pontos onde o vídeo de destaque corta
+            pra uma intervenção em tela cheia do personagem, e depois
+            volta a tocar normalmente de onde parou.
+        closing_clip_path: clipe do personagem se despedindo.
         clip_start_sec: o quanto o highlight_path foi cortado a partir do
             vídeo original (source_meta["clip_start_sec"]) — usado pra
             converter os timestamps das intervenções pra tempo relativo
@@ -140,6 +141,20 @@ def compose_video_with_interventions(
             check=True,
         )
 
+    def make_base_segment(start_sec: float, out_path: str, duration_sec: float | None = None) -> None:
+        """Corta um trecho do vídeo de destaque tocando normalmente."""
+        cmd = ["ffmpeg", "-y", "-ss", str(start_sec), "-i", highlight_path]
+        if duration_sec is not None:
+            cmd += ["-t", str(duration_sec)]
+        cmd += [
+            "-r", str(TARGET_FPS),
+            "-pix_fmt", "yuv420p",
+            "-c:v", "libx264",
+            *AUDIO_PARAMS,
+            out_path,
+        ]
+        subprocess.run(cmd, check=True)
+
     highlight_duration = get_video_duration(highlight_path)
 
     # Converte timestamps para o tempo relativo ao highlight_path, e
@@ -159,80 +174,25 @@ def compose_video_with_interventions(
 
     cursor = 0.0
     for i, (item, rel_ts) in enumerate(zip(items, rel_points)):
-        # --- Segmento de base ANTES desta intervenção ---
+        # --- Trecho de base ANTES desta intervenção (vídeo tocando normal) ---
         base_duration = max(0.0, rel_ts - cursor)
         if base_duration > 0.3:  # ignora segmentos irrisórios (evita erro do ffmpeg com duração ~0)
             base_seg_path = f"base_seg_{i}.mp4"
-            subprocess.run(
-                [
-                    "ffmpeg", "-y",
-                    "-ss", str(cursor),
-                    "-i", highlight_path,
-                    "-t", str(base_duration),
-                    "-r", str(TARGET_FPS),
-                    "-pix_fmt", "yuv420p",
-                    "-c:v", "libx264",
-                    *AUDIO_PARAMS,
-                    base_seg_path,
-                ],
-                check=True,
-            )
+            make_base_segment(cursor, base_seg_path, duration_sec=base_duration)
             segment_files.append(base_seg_path)
 
-        # --- Segmento de intervenção: frame congelado + PiP do personagem ---
-        # Usa o filtro "tpad" (stop_mode=clone) para congelar o vídeo
-        # nesse instante — técnica nativa do ffmpeg pra "freeze frame",
-        # feita inteiramente dentro do grafo de filtros. É mais robusta
-        # que o método anterior (extrair um JPEG e recriar um vídeo em
-        # loop a partir dele), que produziu o personagem "estático" numa
-        # tentativa anterior — provavelmente por um descompasso de
-        # timestamps entre o vídeo congelado (via imagem) e o overlay.
-        clip_duration = get_video_duration(item["clip_path"])
+        # --- Intervenção em tela cheia ---
         intervention_seg_path = f"intervention_seg_{i}.mp4"
-        subprocess.run(
-            [
-                "ffmpeg", "-y",
-                "-i", highlight_path,      # [0] vídeo de destaque original
-                "-i", item["clip_path"],    # [1] clipe do personagem (vídeo + áudio)
-                "-filter_complex",
-                # Pega uma fatia mínima (1 frame) do vídeo de destaque no
-                # instante da intervenção, e "clona" esse frame por
-                # clip_duration segundos usando tpad — isso é o "congelar".
-                f"[0:v]trim=start={rel_ts}:end={rel_ts + 0.04},setpts=PTS-STARTPTS,"
-                f"tpad=stop_mode=clone:stop_duration={clip_duration}[frozen];"
-                f"[1:v]scale=iw*{pip_scale}:ih*{pip_scale}[pip];"
-                f"[frozen][pip]overlay=x={pip_margin}:y={pip_margin}:shortest=1[vout]",
-                "-map", "[vout]",
-                "-map", "1:a",
-                "-r", str(TARGET_FPS),
-                "-pix_fmt", "yuv420p",
-                "-c:v", "libx264",
-                *AUDIO_PARAMS,
-                intervention_seg_path,
-            ],
-            check=True,
-        )
+        make_fullscreen_segment(item["clip_path"], intervention_seg_path)
         segment_files.append(intervention_seg_path)
 
         cursor = rel_ts
 
-    # --- Segmento final de base, depois da última intervenção ---
+    # --- Trecho de base final, depois da última intervenção ---
     final_duration = max(0.0, highlight_duration - cursor)
     if final_duration > 0.3:
         final_seg_path = "base_seg_final.mp4"
-        subprocess.run(
-            [
-                "ffmpeg", "-y",
-                "-ss", str(cursor),
-                "-i", highlight_path,
-                "-r", str(TARGET_FPS),
-                "-pix_fmt", "yuv420p",
-                "-c:v", "libx264",
-                *AUDIO_PARAMS,
-                final_seg_path,
-            ],
-            check=True,
-        )
+        make_base_segment(cursor, final_seg_path)
         segment_files.append(final_seg_path)
 
     # --- Despedida em tela cheia ---
