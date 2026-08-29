@@ -1,0 +1,398 @@
+"""
+telegram_approval.py
+
+Checkpoint humano do pipeline. Diferente da versão anterior (dois
+workflows separados, dependendo do cron de 5 em 5 min rodar em dia),
+esta versão segue o mesmo padrão da outra pipeline do usuário: TUDO
+roda dentro do MESMO job do GitHub Actions, com um loop de espera
+bloqueante que consulta o Telegram a cada poucos segundos.
+
+Isso evita depender de workflows agendados (`schedule`) do GitHub
+Actions disparando no horário certo — o que não é garantido: o próprio
+GitHub avisa que execuções agendadas podem atrasar ou ser puladas em
+períodos de carga alta. Um loop dentro de um único job não tem esse
+problema.
+
+Fluxo:
+1. send_for_approval() manda o vídeo do avatar e a thumbnail como duas
+   mensagens separadas no Telegram, cada uma com seus próprios botões
+   de Aprovar/Rejeitar.
+2. wait_for_approval() entra num loop (até `timeout` segundos, padrão
+   1h) consultando getUpdates a cada poucos segundos. Processa:
+   - Aprovação/rejeição de cada item.
+   - Ao REJEITAR um item, pede um substituto (responder com
+     vídeo/imagem) e mostra um botão "Cancelar publicação".
+   - Mídia enviada como substituto é baixada localmente (sem precisar
+     re-hospedar em nenhum storage — tudo no mesmo job) e aprova esse
+     item automaticamente.
+   - Se nem tudo for decidido dentro do timeout, o workflow é
+     CANCELADO (nada é publicado) — diferente da outra pipeline do
+     usuário, que publica automaticamente após 1h; aqui, dado que o
+     conteúdo é sensível (notícia/entrevista política), o padrão seguro
+     é cancelar, não publicar sem revisão.
+"""
+
+import os
+import time
+import json
+import requests
+
+
+class TelegramApproval:
+    def __init__(self):
+        self.bot_token = os.environ["TELEGRAM_BOT_TOKEN"]
+        self.chat_id = os.environ["TELEGRAM_CHAT_ID"]
+        self.base_url = f"https://api.telegram.org/bot{self.bot_token}"
+        self.offset = self._obter_offset_inicial()
+
+    def _obter_offset_inicial(self) -> int:
+        """
+        Pula qualquer update antigo (de testes anteriores, cliques não
+        processados etc.) — só processa o que chegar A PARTIR de agora.
+        """
+        try:
+            resp = requests.get(f"{self.base_url}/getUpdates", params={"offset": -1}, timeout=10)
+            result = resp.json()
+            if result.get("ok") and result.get("result"):
+                return result["result"][-1]["update_id"] + 1
+        except Exception:
+            pass
+        return 0
+
+    # -- Envio -------------------------------------------------------------
+
+    @staticmethod
+    def _post_with_retry(
+        url: str,
+        max_retries: int = 3,
+        initial_backoff_sec: float = 5,
+        reopen_file: tuple | None = None,
+        **request_kwargs,
+    ):
+        """
+        POST com retry/backoff para erros transitórios de rede (timeout,
+        conexão interrompida) — uploads de vídeo/foto pro Telegram às
+        vezes esbarram em instabilidade momentânea do runner do GitHub
+        Actions ou da própria API do Telegram.
+
+        reopen_file: (caminho, nome_do_campo) — se fornecido, reabre o
+        arquivo do zero a cada nova tentativa (um handle de arquivo já
+        enviado numa tentativa falha não pode ser reaproveitado).
+        """
+        import time
+
+        last_error = None
+        for attempt in range(1, max_retries + 1):
+            if reopen_file and attempt > 1:
+                path, field_name = reopen_file
+                request_kwargs["files"] = {field_name: open(path, "rb")}
+
+            try:
+                resp = requests.post(url, **request_kwargs)
+                resp.raise_for_status()
+                return resp
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                last_error = e
+                if attempt == max_retries:
+                    raise
+                wait = initial_backoff_sec * (2 ** (attempt - 1))
+                print(f"[telegram] Tentativa {attempt}/{max_retries} falhou ({e}). "
+                      f"Tentando de novo em {wait}s...")
+                time.sleep(wait)
+            finally:
+                files = request_kwargs.get("files")
+                if files:
+                    for f in files.values():
+                        try:
+                            f.close()
+                        except Exception:
+                            pass
+
+        raise last_error  # pragma: no cover — inalcançável na prática
+
+    def send_message(self, text: str, reply_markup: dict | None = None) -> None:
+        payload = {"chat_id": self.chat_id, "text": text, "parse_mode": "Markdown"}
+        if reply_markup:
+            payload["reply_markup"] = json.dumps(reply_markup)
+        try:
+            self._post_with_retry(f"{self.base_url}/sendMessage", json=payload, timeout=20)
+        except Exception as e:
+            print(f"[telegram] Falha ao enviar mensagem: {e}")
+
+    def send_video(self, path: str, caption: str, reply_markup: dict | None = None) -> None:
+        data = {"chat_id": self.chat_id, "caption": caption, "parse_mode": "Markdown"}
+        if reply_markup:
+            data["reply_markup"] = json.dumps(reply_markup)
+        self._post_with_retry(
+            f"{self.base_url}/sendVideo",
+            data=data,
+            files={"video": open(path, "rb")},
+            timeout=180,  # vídeos podem demorar mais pra subir; margem maior
+            reopen_file=(path, "video"),
+        )
+
+    def send_photo(self, path: str, caption: str, reply_markup: dict | None = None) -> None:
+        data = {"chat_id": self.chat_id, "caption": caption, "parse_mode": "Markdown"}
+        if reply_markup:
+            data["reply_markup"] = json.dumps(reply_markup)
+        self._post_with_retry(
+            f"{self.base_url}/sendPhoto",
+            data=data,
+            files={"photo": open(path, "rb")},
+            timeout=90,
+            reopen_file=(path, "photo"),
+        )
+
+    def answer_callback(self, callback_id: str, text: str) -> None:
+        try:
+            requests.post(
+                f"{self.base_url}/answerCallbackQuery",
+                json={"callback_query_id": callback_id, "text": text},
+                timeout=10,
+            )
+        except Exception:
+            pass
+
+    def _download_telegram_file(self, file_id: str, output_path: str) -> str:
+        resp = requests.get(f"{self.base_url}/getFile", params={"file_id": file_id}, timeout=15)
+        resp.raise_for_status()
+        file_path = resp.json()["result"]["file_path"]
+
+        file_url = f"https://api.telegram.org/file/bot{self.bot_token}/{file_path}"
+        file_resp = requests.get(file_url, timeout=120)
+        file_resp.raise_for_status()
+        with open(output_path, "wb") as f:
+            f.write(file_resp.content)
+        return output_path
+
+    def get_updates(self) -> list:
+        try:
+            resp = requests.get(
+                f"{self.base_url}/getUpdates",
+                params={"offset": self.offset, "timeout": 1},
+                timeout=15,
+            )
+            result = resp.json()
+            if not result.get("ok"):
+                return []
+            updates = result.get("result", [])
+            if updates:
+                self.offset = updates[-1]["update_id"] + 1
+            return updates
+        except Exception as e:
+            print(f"[telegram] Falha ao buscar updates: {e}")
+            return []
+
+
+# ---------------------------------------------------------------------------
+# Fluxo de aprovação
+# ---------------------------------------------------------------------------
+
+def send_for_approval(
+    bot: TelegramApproval,
+    video_id: str,
+    script_text: str,
+    avatar_video_path: str,
+    thumbnail_path: str,
+) -> None:
+    video_caption = f"🎬 *Vídeo do avatar* (ID: `{video_id}`)\n\n*Roteiro:*\n{script_text}"
+    video_markup = {
+        "inline_keyboard": [[
+            {"text": "✅ Aprovar vídeo", "callback_data": f"approve_video:{video_id}"},
+            {"text": "❌ Rejeitar vídeo", "callback_data": f"reject_video:{video_id}"},
+        ]]
+    }
+    bot.send_video(avatar_video_path, video_caption, video_markup)
+
+    thumb_caption = f"🖼️ *Thumbnail* (ID: `{video_id}`)"
+    thumb_markup = {
+        "inline_keyboard": [[
+            {"text": "✅ Aprovar thumbnail", "callback_data": f"approve_thumb:{video_id}"},
+            {"text": "❌ Rejeitar thumbnail", "callback_data": f"reject_thumb:{video_id}"},
+        ]]
+    }
+    bot.send_photo(thumbnail_path, thumb_caption, thumb_markup)
+
+
+def wait_for_approval(
+    bot: TelegramApproval,
+    video_id: str,
+    avatar_video_path: str,
+    thumbnail_path: str,
+    timeout: int = 3600,
+) -> dict:
+    """
+    Loop bloqueante até timeout segundos. Retorna:
+      {"decision": "approved", "video_path": ..., "thumbnail_path": ...}
+      {"decision": "cancelled"}
+      {"decision": "timeout"}
+    """
+    state = {
+        "video_status": "waiting",
+        "thumb_status": "waiting",
+        "awaiting_replacement": None,  # None | "video" | "thumbnail"
+        "video_override": None,
+        "thumb_override": None,
+    }
+
+    start = time.time()
+    print(f"⏳ Aguardando aprovação no Telegram (timeout: {timeout // 60} min)...")
+
+    while time.time() - start < timeout:
+        for update in bot.get_updates():
+            callback = update.get("callback_query")
+            if callback:
+                data = callback.get("data", "")
+                if ":" not in data:
+                    continue
+                action, cb_video_id = data.split(":", 1)
+                if cb_video_id != video_id:
+                    continue
+
+                if action == "cancel":
+                    bot.answer_callback(callback["id"], "Publicação cancelada.")
+                    bot.send_message(f"🚫 Publicação cancelada (ID: `{video_id}`).")
+                    return {"decision": "cancelled"}
+
+                if action == "approve_video":
+                    state["video_status"] = "approved"
+                    bot.answer_callback(callback["id"], "Vídeo aprovado.")
+                elif action == "reject_video":
+                    state["video_status"] = "rejected"
+                    state["awaiting_replacement"] = "video"
+                    bot.answer_callback(callback["id"], "Vídeo rejeitado.")
+                    bot.send_message(
+                        f"❌ Vídeo rejeitado (ID: `{video_id}`).\n\n"
+                        f"Envie um vídeo de substituição nesta conversa, ou "
+                        f"clique abaixo para cancelar a publicação.",
+                        reply_markup={"inline_keyboard": [[
+                            {"text": "🚫 Cancelar publicação", "callback_data": f"cancel:{video_id}"}
+                        ]]},
+                    )
+                elif action == "approve_thumb":
+                    state["thumb_status"] = "approved"
+                    bot.answer_callback(callback["id"], "Thumbnail aprovada.")
+                elif action == "reject_thumb":
+                    state["thumb_status"] = "rejected"
+                    state["awaiting_replacement"] = "thumbnail"
+                    bot.answer_callback(callback["id"], "Thumbnail rejeitada.")
+                    bot.send_message(
+                        f"❌ Thumbnail rejeitada (ID: `{video_id}`).\n\n"
+                        f"Envie uma imagem de substituição nesta conversa, ou "
+                        f"clique abaixo para cancelar a publicação.",
+                        reply_markup={"inline_keyboard": [[
+                            {"text": "🚫 Cancelar publicação", "callback_data": f"cancel:{video_id}"}
+                        ]]},
+                    )
+                continue
+
+            message = update.get("message")
+            if not message or not state["awaiting_replacement"]:
+                continue
+
+            if state["awaiting_replacement"] == "video" and "video" in message:
+                local_path = "avatar_override.mp4"
+                bot._download_telegram_file(message["video"]["file_id"], local_path)
+                state["video_override"] = local_path
+                state["video_status"] = "approved"
+                state["awaiting_replacement"] = None
+                bot.send_message(f"✅ Vídeo de substituição recebido (ID: `{video_id}`).")
+
+            elif state["awaiting_replacement"] == "thumbnail" and "photo" in message:
+                local_path = "thumbnail_override.jpg"
+                bot._download_telegram_file(message["photo"][-1]["file_id"], local_path)
+                state["thumb_override"] = local_path
+                state["thumb_status"] = "approved"
+                state["awaiting_replacement"] = None
+                bot.send_message(f"✅ Thumbnail de substituição recebida (ID: `{video_id}`).")
+
+        if state["video_status"] == "approved" and state["thumb_status"] == "approved":
+            return {
+                "decision": "approved",
+                "video_path": state["video_override"] or avatar_video_path,
+                "thumbnail_path": state["thumb_override"] or thumbnail_path,
+            }
+
+        time.sleep(4)
+
+    bot.send_message(
+        f"⏰ Tempo esgotado aguardando aprovação (ID: `{video_id}`). "
+        f"Publicação cancelada — nenhum vídeo foi ao ar."
+    )
+    return {"decision": "timeout"}
+
+
+# ---------------------------------------------------------------------------
+# Fluxo alternativo: aprovação em bloco de VÁRIOS mini-roteiros (usado no
+# pipeline do personagem mascarado, onde não há um único "vídeo do
+# avatar" pra aprovar individualmente — são N intervenções que só fazem
+# sentido compostas juntas no vídeo final).
+# ---------------------------------------------------------------------------
+
+def send_scripts_for_approval(
+    bot: TelegramApproval,
+    video_id: str,
+    interventions: dict,
+    thumbnail_path: str,
+) -> None:
+    bot.send_photo(thumbnail_path, f"🖼️ *Thumbnail* (ID: `{video_id}`)")
+
+    mid_text = "\n\n".join(
+        f"*{i + 1}. {it['topic']}*\n{it['script_text']}"
+        for i, it in enumerate(interventions["mid"])
+    )
+    caption = (
+        f"🎭 *Roteiro completo* (ID: `{video_id}`)\n\n"
+        f"*Abertura:*\n{interventions['opening']['script_text']}\n\n"
+        f"*Intervenções críticas:*\n{mid_text}\n\n"
+        f"*Despedida:*\n{interventions['closing']['script_text']}"
+    )
+    markup = {
+        "inline_keyboard": [[
+            {"text": "✅ Aprovar tudo", "callback_data": f"approve_all:{video_id}"},
+            {"text": "❌ Cancelar", "callback_data": f"cancel:{video_id}"},
+        ]]
+    }
+    bot.send_message(caption, reply_markup=markup)
+
+
+def wait_for_scripts_approval(bot: TelegramApproval, video_id: str, timeout: int = 3600) -> dict:
+    """
+    Loop bloqueante até timeout segundos. Diferente de wait_for_approval
+    (que trata vídeo/thumbnail separadamente com opção de substituto),
+    aqui a decisão é única: aprova tudo ou cancela — os mini-roteiros só
+    fazem sentido como conjunto, já que formam um vídeo só depois de
+    compostos.
+    Retorna {"decision": "approved" | "cancelled" | "timeout"}.
+    """
+    start = time.time()
+    print(f"⏳ Aguardando aprovação dos roteiros no Telegram (timeout: {timeout // 60} min)...")
+
+    while time.time() - start < timeout:
+        for update in bot.get_updates():
+            callback = update.get("callback_query")
+            if not callback:
+                continue
+            data = callback.get("data", "")
+            if ":" not in data:
+                continue
+            action, cb_video_id = data.split(":", 1)
+            if cb_video_id != video_id:
+                continue
+
+            if action == "approve_all":
+                bot.answer_callback(callback["id"], "Aprovado! Gerando vídeo final...")
+                return {"decision": "approved"}
+
+            if action == "cancel":
+                bot.answer_callback(callback["id"], "Cancelado.")
+                bot.send_message(f"🚫 Publicação cancelada (ID: `{video_id}`).")
+                return {"decision": "cancelled"}
+
+        time.sleep(4)
+
+    bot.send_message(
+        f"⏰ Tempo esgotado aguardando aprovação (ID: `{video_id}`). "
+        f"Publicação cancelada — nenhum vídeo foi ao ar."
+    )
+    return {"decision": "timeout"}
