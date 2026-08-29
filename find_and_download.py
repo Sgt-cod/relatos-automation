@@ -223,7 +223,17 @@ def download_video(youtube_url: str, output_path: str = "source_video.mp4") -> s
 
     cmd += [
         "--remote-components", "ejs:github",  # autoriza o yt-dlp a baixar o script auxiliar (do próprio GitHub) que resolve o desafio de JS do YouTube
-        "-f", "b[ext=mp4]/bv[ext=mp4]+ba[ext=m4a]/mp4",  # evita o aviso de formato e cobre mais casos
+        # Prioriza o melhor vídeo+áudio combinados via streams separados
+        # (formato DASH, vai até 1080p e além) — o fallback pra "b[ext=mp4]"
+        # (melhor mp4 JÁ mesclado num arquivo só) só entra se essa opção
+        # falhar. IMPORTANTE: a ordem importa — colocar "b[ext=mp4]"
+        # primeiro faz o yt-dlp aceitar o mp4 mesclado mais antigo do
+        # YouTube (que costuma ser só 360p) e NUNCA tentar a opção de
+        # melhor qualidade, já que a primeira opção "funciona" mesmo em
+        # baixa resolução. Também limita a 1080p pra não baixar 4K à toa
+        # (arquivo gigante, processamento mais lento, sem ganho real pro
+        # formato final do vídeo).
+        "-f", "bv*[ext=mp4][height<=1080]+ba[ext=m4a]/b[ext=mp4][height<=1080]/best[height<=1080]",
         "-o", output_path,
         youtube_url,
     ]
