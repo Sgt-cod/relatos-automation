@@ -14,6 +14,8 @@ import subprocess
 import json
 import os
 
+from pipeline_config import TARGET_FPS
+
 
 def get_video_duration(path: str) -> float:
     """Retorna a duração em segundos de um vídeo, via ffprobe."""
@@ -58,6 +60,8 @@ def apply_frame_overlay(
             "-filter_complex",
             "[1:v][0:v]scale2ref[frame][base];"  # redimensiona a moldura pro tamanho exato do vídeo
             "[base][frame]overlay=0:0:format=auto",
+            "-r", str(TARGET_FPS),
+            "-pix_fmt", "yuv420p",
             "-c:v", "libx264",
             "-c:a", "copy",  # áudio já está correto, só recopia
             "-shortest",  # encerra quando o vídeo (mais curto que a imagem em loop) terminar
@@ -127,6 +131,8 @@ def compose_video_with_interventions(
                 "-vf",
                 f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,"
                 f"pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,setsar=1",
+                "-r", str(TARGET_FPS),
+                "-pix_fmt", "yuv420p",
                 "-c:v", "libx264",
                 *AUDIO_PARAMS,
                 out_path,
@@ -163,6 +169,8 @@ def compose_video_with_interventions(
                     "-ss", str(cursor),
                     "-i", highlight_path,
                     "-t", str(base_duration),
+                    "-r", str(TARGET_FPS),
+                    "-pix_fmt", "yuv420p",
                     "-c:v", "libx264",
                     *AUDIO_PARAMS,
                     base_seg_path,
@@ -196,6 +204,8 @@ def compose_video_with_interventions(
                 f"[frozen][pip]overlay=x={pip_margin}:y={pip_margin}:shortest=1[vout]",
                 "-map", "[vout]",
                 "-map", "1:a",
+                "-r", str(TARGET_FPS),
+                "-pix_fmt", "yuv420p",
                 "-c:v", "libx264",
                 *AUDIO_PARAMS,
                 intervention_seg_path,
@@ -215,6 +225,8 @@ def compose_video_with_interventions(
                 "ffmpeg", "-y",
                 "-ss", str(cursor),
                 "-i", highlight_path,
+                "-r", str(TARGET_FPS),
+                "-pix_fmt", "yuv420p",
                 "-c:v", "libx264",
                 *AUDIO_PARAMS,
                 final_seg_path,
@@ -296,6 +308,8 @@ def compose_final_video(
         "-map", "[vout]",
         "-map", "1:a",  # áudio do avatar (Fish Audio) durante essa parte
         "-t", str(avatar_duration),
+        "-r", str(TARGET_FPS),   # fps fixo — evita descompasso na concatenação final
+        "-pix_fmt", "yuv420p",
         "-c:v", "libx264",
         *AUDIO_PARAMS,
         "clip_a.mp4",
@@ -305,6 +319,8 @@ def compose_final_video(
         "ffmpeg", "-y",
         "-i", interview_path,
         "-ss", str(avatar_duration),
+        "-r", str(TARGET_FPS),
+        "-pix_fmt", "yuv420p",
         "-c:v", "libx264",
         *AUDIO_PARAMS,
         "clip_b.mp4",
