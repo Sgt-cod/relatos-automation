@@ -18,8 +18,31 @@ THUMB_W, THUMB_H = 1280, 720
 BANNER_HEIGHT = int(THUMB_H / 5)
 
 
+USED_THUMBS_FILE = "state/used_thumbnails.json"
+
+
+def _load_used_thumbs() -> set:
+    if os.path.exists(USED_THUMBS_FILE):
+        with open(USED_THUMBS_FILE) as f:
+            return set(json.load(f).get("used", []))
+    return set()
+
+
+def _save_used_thumbs(used: set) -> None:
+    os.makedirs(os.path.dirname(USED_THUMBS_FILE), exist_ok=True)
+    with open(USED_THUMBS_FILE, "w") as f:
+        json.dump({"used": sorted(used)}, f, ensure_ascii=False, indent=2)
+
+
 def pick_random_thumb_image(thumb_dir: str = "assets/thumb") -> str:
-    """Escolhe aleatoriamente uma imagem entre as disponíveis em assets/thumb/."""
+    """
+    Escolhe uma imagem entre as disponíveis em assets/thumb/, sempre
+    priorizando as que ainda NÃO foram usadas no ciclo atual — só depois
+    de usar todas é que o ciclo reinicia (zera a lista de "já usadas" e
+    volta a escolher livremente entre todas). Evita repetir a mesma
+    imagem com frequência, que é o que acontece com sorteio 100% aleatório
+    em conjuntos pequenos.
+    """
     candidates = []
     for ext in ("*.jpg", "*.jpeg", "*.png"):
         candidates.extend(glob.glob(os.path.join(thumb_dir, ext)))
@@ -29,7 +52,24 @@ def pick_random_thumb_image(thumb_dir: str = "assets/thumb") -> str:
             f"Nenhuma imagem encontrada em {thumb_dir}/ — coloque pelo menos "
             f"uma imagem 16:9 (.jpg/.jpeg/.png) nessa pasta."
         )
-    return random.choice(candidates)
+
+    used = _load_used_thumbs()
+    # Só considera "usadas" as que ainda existem na pasta — evita travar
+    # se algum arquivo foi removido/renomeado desde o último registro.
+    used &= set(candidates)
+
+    available = [c for c in candidates if c not in used]
+
+    if not available:
+        # Já usamos todas as imagens nesse ciclo — zera e recomeça do zero.
+        used = set()
+        available = candidates
+
+    chosen = random.choice(available)
+    used.add(chosen)
+    _save_used_thumbs(used)
+
+    return chosen
 
 
 def generate_hook_text(source_meta: dict, transcript_excerpt: str) -> str:
