@@ -20,6 +20,8 @@ on:
 jobs:
   generate_v_persona:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write  # necessário pro passo final salvar o estado (vídeos processados, rotação de thumbnails) de volta no repositório
     timeout-minutes: 100
     steps:
       - name: Checkout do repositório
@@ -78,3 +80,12 @@ jobs:
           YOUTUBE_REFRESH_TOKEN: ${{ secrets.YOUTUBE_REFRESH_TOKEN }}
           APPROVAL_TIMEOUT_MIN: ${{ github.event.inputs.approval_timeout_min || '60' }}
         run: python approve_and_publish_v.py
+
+      - name: Salvar estado (vídeos processados, rotação de thumbnails)
+        if: always()  # roda mesmo se um passo anterior falhar/for cancelado — o que já foi atualizado até ali continua valendo
+        run: |
+          git config user.name "pipeline-bot"
+          git config user.email "pipeline-bot@users.noreply.github.com"
+          git add state/
+          git commit -m "Atualiza estado: $(date -u +%Y%m%d-%H%M%S)" || echo "Nada para commitar"
+          git push || echo "Nada para enviar (ou conflito — verifique manualmente se necessário)"
