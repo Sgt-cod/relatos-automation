@@ -23,6 +23,7 @@ from telegram_approval import TelegramApproval, send_scripts_for_approval, wait_
 from generate_intervention_audios import generate_all_audios
 from generate_intervention_clips import generate_all_clips
 from compose_video import compose_video_with_interventions
+from create_vertical_short import pick_best_intervention_for_short, create_vertical_short
 from publish_youtube import publish_video
 
 APPROVAL_TIMEOUT_SEC = int(os.environ.get("APPROVAL_TIMEOUT_MIN", "60")) * 60
@@ -58,6 +59,17 @@ def main():
 
     print("🎭 Gerando clipes do personagem...")
     clips = generate_all_clips(audios)
+
+    print("📱 Gerando corte vertical (Reels/Shorts/TikTok) pra postagem manual...")
+    best_idx = pick_best_intervention_for_short(interventions["mid"])
+    best_topic = interventions["mid"][best_idx]["topic"]
+    vertical_path = create_vertical_short(clips["mid_clips"][best_idx])
+    bot.send_video(
+        vertical_path,
+        f"📱 *Corte vertical pronto* (tema: {best_topic})\n\n"
+        f"Baixe e poste manualmente onde quiser — nenhuma publicação "
+        f"automática foi feita.",
+    )
 
     mid_interventions_with_clips = [
         {"timestamp_sec": it["timestamp_sec"], "clip_path": clip_path}
