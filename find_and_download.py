@@ -174,13 +174,19 @@ def find_candidate_video_from_url(url_or_id: str) -> dict:
     }
 
 
-def find_candidate_video() -> dict:
-    """Percorre os canais configurados e devolve o primeiro candidato novo."""
+def find_candidate_videos() -> list:
+    """
+    Percorre os canais configurados e devolve TODOS os candidatos novos
+    encontrados (não só o primeiro) — assim, se um deles falhar no
+    download (ex.: bloqueio geográfico), o main() consegue tentar o
+    próximo em vez de travar o workflow inteiro.
+    """
     processed = _load_processed()
     published_after = (
         datetime.now(timezone.utc) - timedelta(days=MAX_VIDEO_AGE_DAYS)
     ).strftime("%Y-%m-%dT%H:%M:%SZ")
 
+    candidates = []
     for channel_name, channel_id in CHANNELS.items():
         if channel_id == "CHANNEL_ID_AQUI":
             continue  # canal ainda não configurado
@@ -196,20 +202,31 @@ def find_candidate_video() -> dict:
                 if not (MIN_SOURCE_DURATION_SEC <= duration <= MAX_SOURCE_DURATION_SEC):
                     continue
 
-                return {
+                candidates.append({
                     "video_id": video_id,
                     "channel": channel_name,
                     "title": item["snippet"]["title"],
                     "url": f"https://www.youtube.com/watch?v={video_id}",
                     "duration_sec": duration,
-                }
+                })
 
-    raise RuntimeError("Nenhum vídeo novo encontrado nos canais configurados.")
+    if not candidates:
+        raise RuntimeError("Nenhum vídeo novo encontrado nos canais configurados.")
+
+    return candidates
 
 
 # ---------------------------------------------------------------------------
 # 3. Download
 # ---------------------------------------------------------------------------
+
+class VideoUnavailableError(Exception):
+    """Levantado quando o download falha por um motivo NÃO recuperável
+    tentando de novo (ex.: bloqueio geográfico, vídeo privado/removido)
+    — nesses casos, o certo é pular pro próximo candidato, não repetir a
+    mesma tentativa."""
+    pass
+
 
 def download_video(youtube_url: str, output_path: str = "source_video.mp4") -> str:
     cmd = ["yt-dlp"]
@@ -237,7 +254,35 @@ def download_video(youtube_url: str, output_path: str = "source_video.mp4") -> s
         "-o", output_path,
         youtube_url,
     ]
-    subprocess.run(cmd, check=True)
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+
+    if result.returncode != 0:
+        stderr = result.stderr or ""
+        # Mensagens de erro do yt-dlp que indicam um problema NÃO
+        # recuperável para este vídeo específico (não adianta tentar de
+        # novo com o mesmo vídeo — precisa pular pro próximo candidato).
+        NON_RECOVERABLE_SIGNATURES = [
+            "not available in your country",
+            "This video is unavailable",
+            "Video unavailable",
+            "This video is private",
+            "has been removed",
+            "account associated with this video has been terminated",
+        ]
+        if any(sig in stderr for sig in NON_RECOVERABLE_SIGNATURES):
+            raise VideoUnavailableError(
+                f"Vídeo indisponível para download (bloqueio geográfico, "
+                f"privado ou removido): {youtube_url}\nDetalhe do yt-dlp: "
+                f"{stderr.strip().splitlines()[-1] if stderr.strip() else '(sem detalhe)'}"
+            )
+
+        # Erro genérico — imprime o stderr completo pra debug e levanta
+        # normalmente (mantém o comportamento anterior pra outros tipos
+        # de falha, como timeout/instabilidade de rede).
+        print(stderr)
+        raise subprocess.CalledProcessError(result.returncode, cmd)
+
     return output_path
 
 
@@ -356,14 +401,54 @@ def cut_highlight(
 
 def main():
     specific_video = os.environ.get("SPECIFIC_VIDEO_URL", "").strip()
+
     if specific_video:
         print(f"Vídeo específico indicado manualmente: {specific_video}")
         candidate = find_candidate_video_from_url(specific_video)
+        print(f"Candidato selecionado: {candidate['title']} ({candidate['channel']})")
+        try:
+            download_video(candidate["url"])
+        except VideoUnavailableError as e:
+            # Não tem "próximo candidato" pra tentar aqui — o usuário
+            # pediu ESSE vídeo especificamente. Falha com mensagem clara
+            # em vez de um traceback genérico.
+            print(str(e))
+            raise SystemExit(
+                "\nO vídeo indicado manualmente não pôde ser baixado "
+                "(veja o motivo acima — provavelmente bloqueio geográfico "
+                "para a região dos servidores do GitHub Actions, ou o "
+                "vídeo está privado/removido). Escolha outro vídeo e "
+                "dispare o workflow de novo."
+            )
     else:
-        candidate = find_candidate_video()
-    print(f"Candidato selecionado: {candidate['title']} ({candidate['channel']})")
+        candidates = find_candidate_videos()
+        print(f"{len(candidates)} candidato(s) encontrado(s) na busca.")
 
-    download_video(candidate["url"])
+        candidate = None
+        processed = _load_processed()
+        for attempt in candidates:
+            print(f"Tentando: {attempt['title']} ({attempt['channel']})")
+            try:
+                download_video(attempt["url"])
+                candidate = attempt
+                break
+            except VideoUnavailableError as e:
+                print(f"  Pulando este candidato: {e}")
+                # Marca como processado mesmo sem ter sido usado, pra não
+                # ficar tentando baixar o mesmo vídeo bloqueado de novo
+                # em toda execução futura.
+                processed.add(attempt["video_id"])
+                _save_processed(processed)
+                continue
+
+        if candidate is None:
+            raise RuntimeError(
+                "Nenhum dos candidatos encontrados pôde ser baixado "
+                "(todos bloqueados/indisponíveis). Tente rodar de novo "
+                "mais tarde ou ajuste os canais/palavras-chave em "
+                "pipeline_config.py."
+            )
+
     transcript = transcribe("source_video.mp4")
 
     highlight_window = find_highlight_window(transcript, HIGHLIGHT_DURATION_SEC)
