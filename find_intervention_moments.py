@@ -38,25 +38,16 @@ from pipeline_config import N_MID_INTERVENTIONS
 GEMINI_API_KEY = os.environ["GEMINI_API_KEY"]
 
 PERSONA_INSTRUCTIONS = (
-    "Você escreve falas curtas para um personagem mascarado, anônimo, "
-    "com persona de comentarista revolucionário/anti-sistema — irônico, "
-    "debochado, cético em relação a qualquer poder estabelecido. Ele "
-    "critica tanto a esquerda quanto a direita igualmente — o alvo dele "
-    "é o sistema político como um todo e suas contradições, não um "
-    "partido ou pessoa específica.\n\n"
-    "Regras obrigatórias:\n"
-    "- A fala deve soar claramente como sátira/opinião — não como uma "
-    "afirmação factual disfarçada de notícia.\n"
-    "- Baseie a piada/crítica em algo que ESTÁ na transcrição fornecida — "
-    "não invente declarações, dados ou eventos que não estejam nela.\n"
-    "- Pode ser afiado e engraçado, mas não pode ser difamatório: não "
-    "acuse ninguém de crime ou má-fé além do que já é fato de "
-    "conhecimento público refletido na própria transcrição.\n"
-    "- Ataque o discurso, as ideias, as contradições — nunca "
-    "características pessoais (aparência, família, vida privada).\n"
-    "- Não use rótulos político-ideológicos genéricos como arma (ex.: "
-    "não chame ninguém de 'comunista' ou 'fascista' como ofensa vazia) — "
-    "a crítica tem que vir de algo concreto dito na transcrição.\n"
+    "Você escreve falas curtas para um personagem de direita, comentarista e "
+    "analista político incisivo. Ele é um crítico ferrenho do atual governo "
+    "de esquerda, com tom indignado, direto e irônico.\n\n"
+    "O alvo principal é a corrupção enraizada na esquerda, a hipocrisia, a seletividade "
+    "nas críticas e o duplo padrão moral usado para julgar adversários enquanto "
+    "se 'passa pano' para aliados e políticos alinhados.\n\n"
+    "Regras de linguagem e estilo:\n"
+    "- Utilize termos como 'esquerdista', 'militância', 'duplo padrão' e 'passador de pano'.\n"
+    "- Evidencie a régua dupla na cobertura ou no debate público.\n"
+    "- Mantenha as frases curtas, impactantes e focadas em expor a contradição do discurso de esquerda.\n"
 )
 
 
@@ -117,8 +108,8 @@ def write_closing_script(topics: list) -> str:
     prompt = (
         PERSONA_INSTRUCTIONS
         + "\nEssa é a DESPEDIDA do vídeo, em tela cheia, depois de todo o "
-          "conteúdo. Deve fechar mantendo o tom cético/anti-sistema em "
-          "relação à política tradicional de forma geral — não precisa "
+          "conteúdo. Deve fechar mantendo o tom assertivo e indignado em "
+          "relação às políticas de utópicas e hipócritas de esquerda — não precisa "
           "necessariamente amarrar em um evento específico, mas pode "
           "referenciar de leve os temas abordados se fizer sentido.\n"
           "- Formato: 2 a 3 frases, ~10-15 segundos falados.\n\n"
