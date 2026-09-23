@@ -48,11 +48,15 @@ def main():
         thumbnail_path="thumbnail.jpg",
     )
 
-    result = wait_for_scripts_approval(bot=bot, video_id=video_id, timeout=APPROVAL_TIMEOUT_SEC)
+    result = wait_for_scripts_approval(
+        bot=bot, video_id=video_id, thumbnail_path="thumbnail.jpg", timeout=APPROVAL_TIMEOUT_SEC
+    )
 
     if result["decision"] != "approved":
         print(f"Publicação não realizada (decisão: {result['decision']}).")
         sys.exit(0)  # não é falha do workflow — é uma decisão válida do usuário
+
+    final_thumbnail_path = result["thumbnail_path"]  # thumbnail.jpg original, ou substituta enviada no Telegram
 
     print("✅ Aprovado! Gerando áudio de cada parte do roteiro...")
     audios = generate_all_audios(interventions)
@@ -97,7 +101,7 @@ def main():
     print("📤 Publicando no YouTube...")
     youtube_video_id = publish_video(
         video_path="final_video.mp4",
-        thumbnail_path="thumbnail.jpg",
+        thumbnail_path=final_thumbnail_path,
         title=title,
         description=description,
         tags=["política", "sátira", "análise"],
