@@ -335,59 +335,128 @@ def send_scripts_for_approval(
     interventions: dict,
     thumbnail_path: str,
 ) -> None:
-    bot.send_photo(thumbnail_path, f"🖼️ *Thumbnail* (ID: `{video_id}`)")
-
+    """
+    Envia o roteiro completo e a thumbnail como DUAS mensagens separadas,
+    cada uma com seus próprios botões — permite aprovar/rejeitar cada
+    parte de forma independente. Rejeitar a thumbnail abre a opção de
+    enviar uma imagem de substituição; rejeitar o roteiro cancela a
+    publicação (não há como editar o texto pelo Telegram).
+    """
     mid_text = "\n\n".join(
         f"*{i + 1}. {it['topic']}*\n{it['script_text']}"
         for i, it in enumerate(interventions["mid"])
     )
-    caption = (
+    script_caption = (
         f"🎭 *Roteiro completo* (ID: `{video_id}`)\n\n"
         f"*Abertura:*\n{interventions['opening']['script_text']}\n\n"
         f"*Intervenções críticas:*\n{mid_text}\n\n"
         f"*Despedida:*\n{interventions['closing']['script_text']}"
     )
-    markup = {
+    script_markup = {
         "inline_keyboard": [[
-            {"text": "✅ Aprovar tudo", "callback_data": f"approve_all:{video_id}"},
-            {"text": "❌ Cancelar", "callback_data": f"cancel:{video_id}"},
+            {"text": "✅ Aprovar roteiro", "callback_data": f"approve_script:{video_id}"},
+            {"text": "❌ Rejeitar roteiro", "callback_data": f"reject_script:{video_id}"},
         ]]
     }
-    bot.send_message(caption, reply_markup=markup)
+    bot.send_message(script_caption, reply_markup=script_markup)
+
+    thumb_markup = {
+        "inline_keyboard": [[
+            {"text": "✅ Aprovar thumbnail", "callback_data": f"approve_thumb:{video_id}"},
+            {"text": "❌ Rejeitar thumbnail", "callback_data": f"reject_thumb:{video_id}"},
+        ]]
+    }
+    bot.send_photo(thumbnail_path, f"🖼️ *Thumbnail* (ID: `{video_id}`)", reply_markup=thumb_markup)
 
 
-def wait_for_scripts_approval(bot: TelegramApproval, video_id: str, timeout: int = 3600) -> dict:
+def wait_for_scripts_approval(bot: TelegramApproval, video_id: str, thumbnail_path: str, timeout: int = 3600) -> dict:
     """
-    Loop bloqueante até timeout segundos. Diferente de wait_for_approval
-    (que trata vídeo/thumbnail separadamente com opção de substituto),
-    aqui a decisão é única: aprova tudo ou cancela — os mini-roteiros só
-    fazem sentido como conjunto, já que formam um vídeo só depois de
-    compostos.
-    Retorna {"decision": "approved" | "cancelled" | "timeout"}.
+    Loop bloqueante até timeout segundos. Roteiro e thumbnail são
+    aprovados/rejeitados INDEPENDENTEMENTE:
+    - Rejeitar o roteiro cancela a publicação de vez (não dá pra editar
+      texto pelo Telegram).
+    - Rejeitar a thumbnail pede um substituto (imagem enviada na
+      conversa) ou permite cancelar; a publicação segue assim que os
+      DOIS itens estiverem aprovados (thumbnail original ou substituta).
+
+    Retorna:
+        {"decision": "approved", "thumbnail_path": <original ou substituta>}
+        {"decision": "cancelled"}
+        {"decision": "timeout"}
     """
+    state = {
+        "script_status": "waiting",   # waiting | approved
+        "thumb_status": "waiting",    # waiting | approved
+        "awaiting_replacement": None,  # None | "thumbnail"
+        "thumb_override": None,
+    }
+
     start = time.time()
-    print(f"⏳ Aguardando aprovação dos roteiros no Telegram (timeout: {timeout // 60} min)...")
+    print(f"⏳ Aguardando aprovação do roteiro/thumbnail no Telegram (timeout: {timeout // 60} min)...")
 
     while time.time() - start < timeout:
         for update in bot.get_updates():
             callback = update.get("callback_query")
-            if not callback:
-                continue
-            data = callback.get("data", "")
-            if ":" not in data:
-                continue
-            action, cb_video_id = data.split(":", 1)
-            if cb_video_id != video_id:
+            if callback:
+                data = callback.get("data", "")
+                if ":" not in data:
+                    continue
+                action, cb_video_id = data.split(":", 1)
+                if cb_video_id != video_id:
+                    continue
+
+                if action == "cancel":
+                    bot.answer_callback(callback["id"], "Publicação cancelada.")
+                    bot.send_message(f"🚫 Publicação cancelada (ID: `{video_id}`).")
+                    return {"decision": "cancelled"}
+
+                if action == "approve_script":
+                    state["script_status"] = "approved"
+                    bot.answer_callback(callback["id"], "Roteiro aprovado.")
+
+                elif action == "reject_script":
+                    bot.answer_callback(callback["id"], "Roteiro rejeitado.")
+                    bot.send_message(
+                        f"❌ Roteiro rejeitado (ID: `{video_id}`). Publicação "
+                        f"cancelada — não é possível editar o texto pelo Telegram."
+                    )
+                    return {"decision": "cancelled"}
+
+                elif action == "approve_thumb":
+                    state["thumb_status"] = "approved"
+                    bot.answer_callback(callback["id"], "Thumbnail aprovada.")
+
+                elif action == "reject_thumb":
+                    state["thumb_status"] = "rejected"
+                    state["awaiting_replacement"] = "thumbnail"
+                    bot.answer_callback(callback["id"], "Thumbnail rejeitada.")
+                    bot.send_message(
+                        f"❌ Thumbnail rejeitada (ID: `{video_id}`).\n\n"
+                        f"Envie uma imagem de substituição nesta conversa, ou "
+                        f"clique abaixo para cancelar a publicação.",
+                        reply_markup={"inline_keyboard": [[
+                            {"text": "🚫 Cancelar publicação", "callback_data": f"cancel:{video_id}"}
+                        ]]},
+                    )
                 continue
 
-            if action == "approve_all":
-                bot.answer_callback(callback["id"], "Aprovado! Gerando vídeo final...")
-                return {"decision": "approved"}
+            message = update.get("message")
+            if not message or state["awaiting_replacement"] != "thumbnail":
+                continue
 
-            if action == "cancel":
-                bot.answer_callback(callback["id"], "Cancelado.")
-                bot.send_message(f"🚫 Publicação cancelada (ID: `{video_id}`).")
-                return {"decision": "cancelled"}
+            if "photo" in message:
+                local_path = "thumbnail_override.jpg"
+                bot._download_telegram_file(message["photo"][-1]["file_id"], local_path)
+                state["thumb_override"] = local_path
+                state["thumb_status"] = "approved"
+                state["awaiting_replacement"] = None
+                bot.send_message(f"✅ Thumbnail de substituição recebida (ID: `{video_id}`).")
+
+        if state["script_status"] == "approved" and state["thumb_status"] == "approved":
+            return {
+                "decision": "approved",
+                "thumbnail_path": state["thumb_override"] or thumbnail_path,
+            }
 
         time.sleep(4)
 
